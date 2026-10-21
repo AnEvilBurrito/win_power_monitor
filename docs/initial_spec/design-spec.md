@@ -121,7 +121,7 @@ precedence: discharging plots below zero, charging above zero. Charging statisti
 shown in §5.1 require `--all-states`; the default retains discharge-only statistics.
 
 ```
- wpm · Discharging · root\wmi · 2.0s · 5m00s · 150 pts · live            ? help
+ wpm · Discharging · root\wmi · 5.0s · 5m00s · 60 pts · live            ? help
 ──────────────────────────────────────────────────────────────────────────────────
    12.40 W ↓        15.62 V        0.794 A      ██████████████░░░░░░░░  81%  2h 14m
 ──────────────────────────────────────────────────────────────────────────────────
@@ -199,7 +199,7 @@ Same shape, no layout switch. Energy label flips to `Wh in`, drain becomes `char
 ETA becomes time-to-full. The chart's positive region fills.
 
 ```
- wpm · Charging · root\wmi · 2.0s · 5m00s · 150 pts · live               ? help
+ wpm · Charging · root\wmi · 5.0s · 5m00s · 60 pts · live               ? help
 ──────────────────────────────────────────────────────────────────────────────────
     18.70 W ↑        16.41 V        1.139 A      ██████████████████░░░░░  74%  0h 38m
 ──────────────────────────────────────────────────────────────────────────────────
@@ -231,7 +231,7 @@ gap position and is counted in band D as `N gap(s) (total)`. The line is never d
 through a gap.
 
 ```
- wpm · Discharging · root\wmi · 2.0s · 5m00s · 150 pts · ⏸ PAUSED 44s      ? help
+ wpm · Discharging · root\wmi · 5.0s · 5m00s · 60 pts · ⏸ PAUSED 44s      ? help
 ──────────────────────────────────────────────────────────────────────────────────
    12.40 W ↓        15.62 V        0.794 A      ██████████████░░░░░░░░  81%  — paused
 ──────────────────────────────────────────────────────────────────────────────────
@@ -256,7 +256,7 @@ Empty axes with a stated reason, and probe results printed honestly. `--require-
 turns this into a hard exit with code 3 instead.
 
 ```
- wpm · Unsupported · no battery detected · 2.0s · 5m00s · 150 pts
+ wpm · Unsupported · no battery detected · 5.0s · 5m00s · 60 pts
 ──────────────────────────────────────────────────────────────────────────────────
    Wattage unavailable — no battery and no \Power Meter counter on this system.
    Retained for %/ETA if a battery appears; run  wpm --self-test  for details.

@@ -363,7 +363,7 @@ Launching the dashboard into a pipe would block a validation harness indefinitel
 `%APPDATA%\wpm\config.toml`:
 
 ```toml
-rate = 2.0          # seconds between samples
+rate = 5.0          # seconds between samples
 x_length = 300      # seconds of history on the x-axis
 theme = "default"
 tray = true         # interactive dashboard also shows a notification-area icon

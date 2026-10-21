@@ -86,7 +86,7 @@ impl Settings {
                 .parse::<f64>()
                 .map_err(|_| "WPM_RATE must be seconds".to_owned())?
         } else {
-            file.rate.unwrap_or(2.0)
+            file.rate.unwrap_or(5.0)
         };
         let span = if let Some(value) = cli.x_length {
             value

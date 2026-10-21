@@ -13,7 +13,7 @@ pub enum Theme {
 #[derive(Debug, Parser)]
 #[command(name = "wpm", version, about = "Windows power monitor", group(ArgGroup::new("mode").args(["json", "ndjson", "once", "self_test"]).multiple(false)))]
 pub struct Cli {
-    /// Seconds between samples (0.25–60); below 1 s may skew measurements
+    /// Seconds between samples (default 5, range 0.25–60); below 1 s may skew measurements
     #[arg(long)]
     pub rate: Option<f64>,
     /// History span: seconds, or a duration such as 90s, 5m, 1h

@@ -26,7 +26,7 @@ These were settled during design and should not be re-litigated without reason.
 2. **Rust + ratatui**, single static `.exe`, MSVC target, no runtime dependency.
 3. **winget portable**, `InstallerType: portable`, single exe. No MSIX (sandbox blocks PDH
    and `root\wmi`); MSI only if ARP visibility is ever demanded.
-4. **`--rate` = seconds per sample** (default 2). **`--x-length` = seconds of history on
+4. **`--rate` = seconds per sample** (default 5). **`--x-length` = seconds of history on
    the x-axis** (default 300) — *not* a point count. Samples are derived:
    `ceil(x_length / rate)`. The `--window` flag was dropped as redundant.
 5. **Signed watts**: negative = discharging, positive = charging. Carried over from the

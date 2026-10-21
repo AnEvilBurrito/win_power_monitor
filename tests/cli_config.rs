@@ -47,9 +47,9 @@ impl Drop for ConfigFile {
 #[test]
 fn defaults_and_tray_switches() {
     let settings = resolve(&[], &[], true).expect("defaults");
-    assert_eq!(settings.rate, Duration::from_secs(2));
+    assert_eq!(settings.rate, Duration::from_secs(5));
     assert_eq!(settings.x_length, Duration::from_secs(300));
-    assert_eq!(settings.sample_count, 150);
+    assert_eq!(settings.sample_count, 60);
     assert_eq!(settings.theme, Theme::Default);
     assert!(settings.absolute);
     assert!(resolve(&["--abs"], &[], true).unwrap().absolute);
@@ -177,7 +177,7 @@ fn malformed_config_warns_and_invalid_effective_values_fail() {
     for text in ["not toml", "theme = 'invalid'", "unknown = 1"] {
         let file = ConfigFile::new(text);
         let settings = resolve(&["--config", file.path()], &[], true).expect("fallback");
-        assert_eq!(settings.rate, Duration::from_secs(2));
+        assert_eq!(settings.rate, Duration::from_secs(5));
         assert_eq!(settings.warnings.len(), 1);
     }
     let file = ConfigFile::new("rate = 0\n");
@@ -219,7 +219,7 @@ fn appdata_config_and_empty_log() {
         (key == "APPDATA").then(|| root.clone().into_os_string())
     })
     .expect("missing default config");
-    assert_eq!(settings.rate, Duration::from_secs(2));
+    assert_eq!(settings.rate, Duration::from_secs(5));
     assert!(settings.warnings.is_empty());
     std::fs::write(directory.join("config.toml"), "rate = 6\n").expect("default config");
     let settings = Settings::resolve(&cli, true, |key| {

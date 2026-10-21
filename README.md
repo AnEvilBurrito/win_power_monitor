@@ -158,7 +158,7 @@ results, sample, application version and OS/architecture. These modes are mutual
 exclusive, never use the tray/TUI, and suppress the tray even with `--tray=true`.
 Nonterminal stdout defaults to one JSON object, not an infinite stream.
 
-`--rate 0.25..60` seconds (default 2; subsecond sampling warns), `--x-length` positive
+`--rate 0.25..60` seconds (default 5; subsecond sampling warns), `--x-length` positive
 seconds or `s`/`m`/`h` duration (default 300s). Span must exceed rate and estimate no
 more than 500000 points. `--all-states` includes charging/idle in stats (default:
 discharge only). Charge and discharge Wh remain separate and do not bridge state
@@ -175,7 +175,7 @@ bridging gaps; `--theme default|high-contrast|mono` changes chart color.
 Optional `%APPDATA%\wpm\config.toml`:
 
 ```toml
-rate = 2.0
+rate = 5.0
 x_length = 300
 theme = "default"
 tray = true

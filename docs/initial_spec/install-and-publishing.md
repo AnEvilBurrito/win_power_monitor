@@ -90,7 +90,7 @@ wpm [OPTIONS]
 
 | Flag | Default | Range / values | Meaning |
 |---|---|---|---|
-| `--rate <SECS>` | `2` | 0.25 – 60 | seconds between samples; warns below 1 (probe cost skews the reading) |
+| `--rate <SECS>` | `5` | 0.25 – 60 | seconds between samples; warns below 1 (probe cost skews the reading) |
 | `--x-length <SECS>` | `300` | > `--rate` | seconds of history on the x-axis. Accepts a bare number (`300`) or a duration suffix (`5m`, `90s`) |
 | `--tray[=true\|false]` | `true` | boolean | show an icon alongside the interactive dashboard; `--tray=false` disables only the icon; ignored in noninteractive modes |
 | `--log <PATH>` | off | path | append CSV, schema in §4.1 |
@@ -116,7 +116,7 @@ samples = ceil(x_length / rate)
 
 | Command | Span | Samples |
 |---|---|---|
-| `wpm` | 5m00s | 150 |
+| `wpm` | 5m00s | 60 |
 | `wpm --rate 5 --x-length 300` | 5m00s | 60 |
 | `wpm --rate 0.25 --x-length 300` | 5m00s | 1200 |
 | `wpm --rate 2 --x-length 1h` | 1h00m | 1800 |
@@ -129,7 +129,7 @@ rather than inferred.
 ### 3.4 Examples
 
 ```powershell
-wpm                                  # dashboard + tray, 5-minute window, 2 s cadence
+wpm                                  # dashboard + tray, 5-minute window, 5 s cadence
 wpm --tray=false                     # dashboard only
 wpm --rate 5 --x-length 300          # coarse sampling, same 5-minute window
 wpm --rate 1 --x-length 15m          # fine sampling, 15-minute window
