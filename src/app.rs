@@ -70,6 +70,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     let thread_stop = stop.clone();
     let rate = settings.rate;
     let start = Instant::now();
+    let wall_start = chrono::Utc::now();
     let single = matches!(settings.mode, Mode::Json | Mode::Once | Mode::SelfTest);
     let thread = std::thread::spawn(move || {
         // COM and the WMI connection must be created and dropped on this thread.
@@ -182,6 +183,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
         rate,
         settings.all_states,
     );
+    let mut ui_state = ui::UiState::new(wall_start, 0.0, settings.x_length.as_secs_f64());
     let mut current = None;
     let mut paused = false;
     let mut help = false;
@@ -216,6 +218,16 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 "discharge stats"
             }
         );
+        if !paused {
+            ui_state.advance(
+                start.elapsed().as_secs_f64(),
+                settings.x_length.as_secs_f64(),
+                &history,
+                absolute,
+            );
+        } else {
+            ui_state.select(absolute);
+        }
         terminal
             .draw(|f| {
                 ui::draw(
@@ -238,6 +250,8 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                             start.elapsed().as_secs_f64()
                         },
                         stale: !paused && last_received.elapsed() > rate * 2,
+                        rate: rate.as_secs_f64(),
+                        state: &ui_state,
                     },
                 )
             })
@@ -269,6 +283,10 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 }
                 KeyCode::Char('r') => {
                     history.reset();
+                    ui_state.reset(
+                        start.elapsed().as_secs_f64(),
+                        settings.x_length.as_secs_f64(),
+                    );
                     current = None;
                     frozen_view = None;
                     paused = false;

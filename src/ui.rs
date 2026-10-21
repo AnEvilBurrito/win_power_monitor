@@ -1,15 +1,82 @@
 use crate::{
     cli::Theme,
-    model::{History, Sample, State, number},
+    model::{History, Sample, State, Stats, number},
 };
+use chrono::{DateTime, Local, Utc};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
-    style::{Color, Style},
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Modifier, Style},
     symbols,
-    text::Line,
-    widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
+    text::{Line, Span},
+    widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph, Wrap},
 };
+
+/// Clock anchor never follows later wall-clock adjustments. Viewports use monotonic seconds.
+pub struct UiState {
+    pub x: [f64; 2],
+    pub y: [f64; 2],
+    signed_y: [f64; 2],
+    absolute_y: [f64; 2],
+    origin: f64,
+    wall: DateTime<Utc>,
+}
+impl UiState {
+    pub fn new(wall: DateTime<Utc>, origin: f64, span: f64) -> Self {
+        Self {
+            x: [origin, origin + span],
+            y: [0.0, 10.0],
+            signed_y: [0.0, 0.0],
+            absolute_y: [0.0, 10.0],
+            origin,
+            wall,
+        }
+    }
+    pub fn reset(&mut self, origin: f64, span: f64) {
+        self.origin = origin;
+        self.x = [origin, origin + span];
+        self.signed_y = [0.0, 0.0];
+        self.absolute_y = [0.0, 10.0];
+        self.y = self.absolute_y;
+    }
+    pub fn advance(&mut self, now: f64, span: f64, history: &History, absolute: bool) {
+        let end = now.max(self.origin + span);
+        self.x = [end - span, end];
+        for (mode, bounds) in [(false, &mut self.signed_y), (true, &mut self.absolute_y)] {
+            for w in history
+                .samples
+                .iter()
+                .filter_map(|s| s.watts)
+                .filter(|w| w.is_finite())
+            {
+                let w = if mode { w.abs() } else { w };
+                if w < bounds[0] || w > bounds[1] {
+                    let expanded = nice_y_bounds(std::iter::once(w), mode);
+                    bounds[0] = bounds[0].min(expanded[0]);
+                    bounds[1] = bounds[1].max(expanded[1]);
+                }
+            }
+        }
+        self.select(absolute);
+    }
+    pub fn select(&mut self, absolute: bool) {
+        self.y = if absolute {
+            self.absolute_y
+        } else {
+            if self.signed_y == [0.0, 0.0] {
+                [0.0, 10.0]
+            } else {
+                self.signed_y
+            }
+        };
+    }
+    pub fn clock_label(&self, elapsed: f64) -> String {
+        (self.wall + chrono::Duration::milliseconds((elapsed * 1000.0).round() as i64))
+            .with_timezone(&Local)
+            .format("%H:%M:%S")
+            .to_string()
+    }
+}
 pub struct View<'a> {
     pub history: &'a History,
     pub latest: Option<&'a Sample>,
@@ -22,90 +89,141 @@ pub struct View<'a> {
     pub span: f64,
     pub now: f64,
     pub stale: bool,
+    pub rate: f64,
+    pub state: &'a UiState,
+}
+fn stat_line(label: &str, s: &Stats, absolute: bool) -> Line<'static> {
+    let (avg, min, max) = if absolute {
+        (
+            (s.count > 0).then(|| s.magnitude_sum / s.count as f64),
+            s.magnitude_min,
+            s.magnitude_max,
+        )
+    } else {
+        (s.average(), s.min, s.max)
+    };
+    Line::from(vec![
+        Span::styled(
+            format!(" {label:<7} "),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(format!(
+            "avg {}  min {}  max {} W",
+            number(avg),
+            number(min),
+            number(max)
+        )),
+    ])
 }
 pub fn draw(frame: &mut Frame, v: &View<'_>) {
     let area = frame.area();
-    let color = match v.theme {
-        Theme::Mono => Color::White,
-        Theme::HighContrast => Color::Yellow,
-        _ => {
-            if v.latest.is_some_and(|s| s.state == State::Charging) {
-                Color::Green
-            } else {
-                Color::Cyan
-            }
-        }
+    let mono = matches!(v.theme, Theme::Mono);
+    let axes = Style::default().fg(if mono { Color::White } else { Color::Cyan });
+    let dim = Style::default().fg(if matches!(v.theme, Theme::HighContrast) {
+        Color::Gray
+    } else {
+        Color::DarkGray
+    });
+    let color = if mono {
+        Color::White
+    } else if v.latest.is_some_and(|s| s.state == State::Charging) {
+        Color::Green
+    } else {
+        Color::Yellow
     };
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Min(2),
-        Constraint::Length(if area.height >= 18 { 3 } else { 2 }),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(if area.height >= 24 { 3 } else { 2 }),
+        Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(area);
-    let mode = if v.absolute { "magnitude" } else { "signed" };
-    let status = v.latest.map_or_else(
-        || "wpm · waiting for sampler".into(),
-        |s| {
-            format!(
-                "wpm · {:?} · poll #{} {:.1}s ago · {} · {} · {}",
-                s.state,
-                s.poll_count,
-                (v.now - s.elapsed_s).max(0.0),
-                s.source,
-                if v.paused {
-                    "PAUSED (sampler/log/tray live)"
-                } else if v.stale {
-                    "NO RECENT POLL"
-                } else {
-                    "LIVE"
-                },
-                v.status
+    for i in [1, 3, 5, 7] {
+        frame.render_widget(
+            Paragraph::new("─".repeat(area.width as usize)).style(dim),
+            rows[i],
+        );
+    }
+    let live = if v.paused {
+        "PAUSED"
+    } else if v.stale {
+        "NO RECENT POLL"
+    } else {
+        "LIVE"
+    };
+    let source = v.latest.map_or("waiting", |s| match s.source.as_str() {
+        "wmi:root\\wmi:BatteryStatus" => "root\\wmi",
+        "k32:GetSystemPowerStatus" => "Win32",
+        other => other,
+    });
+    let state = v.latest.map_or(State::Unknown, |s| s.state);
+    let left = if area.width >= 100 {
+        format!(
+            " wpm · {state:?} · {source} · {:.1}s · {:.0}s · {} pts · {live}",
+            v.rate,
+            v.span,
+            v.history.samples.len()
+        )
+    } else {
+        format!(
+            " wpm · {source} · {:.1}s · {:.0}s · {} pts · {live}",
+            v.rate,
+            v.span,
+            v.history.samples.len()
+        )
+    };
+    let top = Layout::horizontal([Constraint::Min(0), Constraint::Length(8)]).split(rows[0]);
+    frame.render_widget(Paragraph::new(left), top[0]);
+    frame.render_widget(Paragraph::new("? help").style(dim).right_aligned(), top[1]);
+    let kpi = if let Some(s) = v.latest {
+        let direction = match s.state {
+            State::Discharging => "↓",
+            State::Charging => "↑",
+            State::Idle => "Idle",
+            State::Unknown => "Unknown",
+        };
+        let value = |n: Option<f64>| {
+            number(
+                n.filter(|n| n.is_finite())
+                    .map(|n| if v.absolute { n.abs() } else { n }),
             )
-        },
-    );
+        };
+        let watts = if v.stale {
+            "—".into()
+        } else {
+            value(s.watts)
+        };
+        let electrical = if area.width >= 80 {
+            format!("   {} V   {} A", number(s.volts), value(s.amps))
+        } else {
+            String::new()
+        };
+        let cells = if area.width >= 100 { 16 } else { 6 };
+        let gauge = s.pct.filter(|p| p.is_finite()).map_or_else(
+            || "unavailable".into(),
+            |p| {
+                let filled = (p.clamp(0.0, 100.0) / 100.0 * cells as f64).round() as usize;
+                format!("{}{}", "█".repeat(filled), "░".repeat(cells - filled))
+            },
+        );
+        let pct = s.pct.map_or("—".into(), |p| format!("{p:.0}"));
+        let eta = if v.stale {
+            "—".into()
+        } else {
+            compact_eta(s)
+        };
+        format!(" {watts} W {direction}{electrical}   {gauge} {pct}%  ETA {eta}")
+    } else {
+        " Waiting for battery flow — not system/wall draw".into()
+    };
     frame.render_widget(
-        Paragraph::new(status).style(Style::default().fg(color)),
-        rows[0],
-    );
-    let current = v.latest.map_or_else(
-        || "Waiting for battery flow (not system draw)".into(),
-        |s| {
-            let arrow = match s.state {
-                State::Discharging => "↓",
-                State::Charging => "↑",
-                _ => "·",
-            };
-            let watts = if v.stale {
-                None
-            } else {
-                s.watts.map(|w| if v.absolute { w.abs() } else { w })
-            };
-            let electrical = if area.width >= 100 {
-                format!(
-                    "  {} V  {} A",
-                    number(s.volts),
-                    number(s.amps.map(|a| if v.absolute { a.abs() } else { a }))
-                )
-            } else {
-                String::new()
-            };
-            format!(
-                "{} W {arrow}{electrical}  {}%  remaining {}",
-                number(watts),
-                number(s.pct),
-                if v.stale {
-                    "—".into()
-                } else {
-                    remaining_label(s)
-                }
-            )
-        },
-    );
-    frame.render_widget(
-        Paragraph::new(current).style(Style::default().fg(color)),
-        rows[1],
+        Paragraph::new(kpi).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        rows[2],
     );
     let mut segments: Vec<Vec<(f64, f64)>> = vec![vec![]];
     for s in &v.history.samples {
@@ -124,59 +242,107 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             segment.push((s.elapsed_s, w));
         }
     }
-    let bounds = nice_y_bounds(segments.iter().flatten().map(|(_, w)| *w), v.absolute);
-    let end = v.now.max(1.0);
-    let start = (end - v.span).max(0.0);
-    let zero = [(start, 0.0), (end, 0.0)];
-    let mut datasets: Vec<_> = segments
-        .iter()
-        .filter(|s| !s.is_empty())
-        .map(|data| {
-            Dataset::default()
-                .data(data)
-                .marker(symbols::Marker::Braille)
-                .graph_type(GraphType::Line)
-                .style(Style::default().fg(if v.paused { Color::DarkGray } else { color }))
-        })
-        .collect();
-    datasets.push(
+    let zero = [(v.state.x[0], 0.0), (v.state.x[1], 0.0)];
+    let mut datasets = vec![
         Dataset::default()
             .data(&zero)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(Color::DarkGray)),
-    );
+            .style(dim),
+    ];
+    datasets.extend(segments.iter().filter(|s| !s.is_empty()).map(|data| {
+        Dataset::default()
+            .data(data)
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(color))
+    }));
+    let bounds = v.state.y;
     let ticks = [bounds[0], (bounds[0] + bounds[1]) / 2.0, bounds[1]];
-    let chart = Chart::new(datasets)
-        .x_axis(Axis::default().bounds([start, end]).labels([
-            Line::from(format!("{start:.0}s")),
-            Line::from(format!("{end:.0}s")),
-        ]))
-        .y_axis(
-            Axis::default()
-                .bounds(bounds)
-                .labels(ticks.map(|t| Line::from(format!("{t:.0}")))),
-        );
-    frame.render_widget(chart, rows[2]);
-    let diagnostic = v.latest.map_or_else(String::new, |s| format!(
-        "poll #{} · last {:.1}s ago · query {:.0}ms · unchanged {} polls (not proof of stale) · {}",
-        s.poll_count, (v.now-s.elapsed_s).max(0.0), s.query_ms, s.unchanged_polls,
-        s.reason.as_deref().unwrap_or("battery flow, not system/wall draw")));
-    let drain = if v.stale {
-        None
-    } else {
-        v.latest.and_then(|s| s.drain_pct_hr)
-    };
     frame.render_widget(
-        Paragraph::new(format!(
-            "session {}\nwindow drain {} %/hr est · {}\n{diagnostic}",
-            v.history.session.display_label(v.absolute),
-            number(drain),
-            v.history.window().display_label(v.absolute)
-        )),
-        rows[3],
+        Chart::new(datasets)
+            .x_axis(
+                Axis::default().style(axes).bounds(v.state.x).labels(
+                    v.state
+                        .x
+                        .map(|t| Line::styled(v.state.clock_label(t), axes)),
+                ),
+            )
+            .y_axis(
+                Axis::default()
+                    .title("W")
+                    .style(axes)
+                    .bounds(bounds)
+                    .labels(ticks.map(|t| Line::styled(format!("{t:.0}"), axes))),
+            ),
+        rows[4],
     );
-    frame.render_widget(Paragraph::new(if v.help {format!("q quit · space freeze · r reset · e signed export · l log · a {mode}/signed · s step · ? help")}
-        else {format!("q quit · space pause · r reset · e export · l log · a {mode} · s step · ? help")}), rows[4]);
+    let mut stats = vec![
+        stat_line("Session", &v.history.session, v.absolute),
+        stat_line("Window", &v.history.window(), v.absolute),
+    ];
+    if rows[6].height >= 3 {
+        stats.push(Line::from(vec![
+            Span::styled(" Energy  ", dim),
+            Span::raw(format!(
+                "out {:.3} Wh · in {:.3} Wh",
+                v.history.session.discharge_wh, v.history.session.charge_wh
+            )),
+            Span::styled("   Health — · Cycles —", dim),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(stats), rows[6]);
+    frame.render_widget(
+        Paragraph::new(if area.width >= 100 {
+            " q quit · space pause · r reset · e export · l log · a signed/abs · s step · ? help"
+        } else {
+            " q quit · space pause · r reset · e export · ? help"
+        })
+        .style(dim),
+        rows[8],
+    );
+    if v.help {
+        let popup = Rect::new(
+            area.x + area.width / 20,
+            area.y + area.height / 10,
+            area.width - area.width / 10,
+            area.height - area.height / 5,
+        );
+        let diagnostic = v.latest.map_or_else(
+            || "Waiting for sampler".into(),
+            |s| {
+                format!(
+                    "poll #{} · age {:.1}s · query {:.0}ms · unchanged {}\n{}\n{}",
+                    s.poll_count,
+                    (v.now - s.elapsed_s).max(0.0),
+                    s.query_ms,
+                    s.unchanged_polls,
+                    s.reason
+                        .as_deref()
+                        .unwrap_or("battery flow, not system/wall draw"),
+                    s.diagnostics.join("\n")
+                )
+            },
+        );
+        frame.render_widget(Clear, popup);
+        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nETA: {}\nDrain: {} %/hr estimate · Health/cycles unavailable\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
+    }
+}
+fn compact_eta(s: &Sample) -> String {
+    s.eta_s.map_or("—".into(), |t| {
+        format!(
+            "{}h{:02}m{}",
+            t / 3600,
+            t % 3600 / 60,
+            if s.eta_source
+                .as_deref()
+                .is_some_and(|s| s.contains("estimate"))
+            {
+                " est"
+            } else {
+                ""
+            }
+        )
+    })
 }
 pub fn remaining_label(s: &Sample) -> String {
     s.eta_s.map_or_else(

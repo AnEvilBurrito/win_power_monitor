@@ -13,20 +13,29 @@ selects the original signed convention; `--abs` explicitly selects magnitude and
 toggles the display. Exports always retain signs. Direction/state remains explicit.
 The historical signed mockups below illustrate signed mode, not the default.
 
-The five implemented bands have no outer chart box. Narrow views omit volts/amps and
+The five implemented bands are separated by thin horizontal rules, with no outer chart box. Narrow views omit volts/amps and
 reduce statistics height. The Y range includes zero; each occupied side is padded by
 10%, floored at 10 W and rounded outward to a 1/2/5 × power-of-ten endpoint. Empty
-ranges use 0–10 W. Tick labels are lower/midpoint/upper values; the zero line is
+ranges use 0–10 W. Bounds persist and only expand when an actual reading exceeds
+them; dropping old samples never shrinks the scale. Reset clears the scale. Signed
+and magnitude modes retain independent bounds. Tick labels are lower/midpoint/upper values; the zero line is
 independent, so magnitude ticks for 27.1 W are 0/25/50, never 0/0/30.
 
 Remaining time is discharge-only: Windows reported runtime, otherwise capacity/rate
 or percentage-trend estimates, explicitly labelled. Drain %/hr uses least squares
 on up to five minutes of contiguous valid discharge percentages, at least two points
 and ten seconds. Missing/gapped/charging/rising data resets the trend; flat slopes
-are unknown. Time-to-full, health/cycles, gauge and clock-time X ticks remain deferred.
+are unknown. Time-to-full and health/cycles remain unavailable (shown as —). The battery gauge
+and local HH:MM:SS clock-time X ticks are implemented.
 Poll count/completion age/query time/unchanged counts are diagnostics, not a claim
 that repeated readings prove firmware staleness. The tray uses 1–3 integer magnitude
 digits and decimal signed tooltip readings, rather than miniature decimal glyphs.
+The configured X span is fixed from session start to start + span while filling,
+then rolls at full span. Pause freezes the viewport, trace, KPI and statistics,
+without stopping sampling/logging/tray. Reset starts a fresh viewport at reset time.
+Clock labels use a startup wall-clock/monotonic anchor (including across reset),
+not the current wall clock or independently shifted sample timestamps. Help (`?`)
+holds polling diagnostics, drain estimate and ETA provenance; the main bands stay clean.
 These implementation clarifications supersede conflicting draft details below.
 
 ## 1. Purpose and scope

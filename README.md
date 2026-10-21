@@ -219,3 +219,17 @@ Outputs: `dist\wpm-windows-x64\{wpm.exe,README.md,SHA256SUMS.txt}`,
 `dist\wpm-windows-x64.zip` and `.zip.sha256`. `dist` is gitignored.
 The `docs\initial_spec` documents remain the original draft goals; this README
 records the actual candidate behavior and deliberate scope limits.
+
+### Dashboard scale and layout
+
+Five bands (status, bold live KPI/gauge/ETA, flexible chart, session/window stats,
+keys) use thin horizontal separators. Magnitude is the default; arrows retain flow
+direction. The configured time span stays fixed while the trace fills left-to-right,
+then rolls at full span. Local HH:MM:SS edge labels use a startup wall/monotonic
+anchor. Y bounds include zero, start at 10 W minimum, and only expand on overflow;
+`r` resets them. `space` freezes the display, not sampling/logging/tray. `?` shows
+poll diagnostics, ETA provenance and drain estimates. Missing health/cycles are —.
+
+Synthetic geometry/scale tests: `cargo test --locked --test dashboard`. Set
+`WPM_RENDER_HTML` to a project-relative HTML path to capture representative styled
+TestBackend cells at 120×32, 100×24, 80×14 and 60×14 for browser examination.

@@ -171,6 +171,8 @@ fn synthetic_dashboard_renders_small_and_large_without_io() {
                         span: 300.0,
                         now: 2.0,
                         stale: false,
+                        rate: 2.0,
+                        state: &wpm_cli::ui::UiState::new(chrono::Utc::now(), 0.0, 300.0),
                     },
                 )
             })
@@ -324,6 +326,8 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
     s.eta_s = Some(7200);
     s.eta_source = Some("capacity/rate estimate".into());
     let s = h.push(s);
+    let mut state = wpm_cli::ui::UiState::new(chrono::Utc::now(), 0.0, 300.0);
+    state.advance(2.0, 300.0, &h, true);
     let mut terminal = Terminal::new(TestBackend::new(150, 32)).unwrap();
     terminal
         .draw(|f| {
@@ -341,6 +345,8 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
                     span: 300.0,
                     now: 2.0,
                     stale: false,
+                    rate: 2.0,
+                    state: &state,
                 },
             )
         })
@@ -356,13 +362,7 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
         .join("\n");
     assert!(text.contains("27.10 W"));
     assert!(!text.contains("-27.10"));
-    for label in [
-        "50",
-        "25",
-        "remaining 2h 00m (capacity/rate estimate)",
-        "poll #12",
-        "drain",
-    ] {
+    for label in ["50", "25", "ETA 2h00m est", "Session", "Health —"] {
         assert!(text.contains(label), "{label}");
     }
     assert!(!text.contains('┌'));
