@@ -10,7 +10,7 @@
 
 | Item | Value | Permanence |
 |---|---|---|
-| `PackageIdentifier` | `YourHandle.Wpm` | **cannot be changed after the first merged submission** |
+| `PackageIdentifier` | `anevilburrito.Wpm` | **cannot be changed after the first merged submission** |
 | Command / shim | `wpm` | user-facing contract |
 | Asset name | `wpm-v0.1.0-x86_64-pc-windows-msvc.exe` | must stay stable across releases |
 | Crate name | `wpm-cli` (crate only), binary `wpm` | free to change |
@@ -20,6 +20,18 @@
 Before committing to `wpm`, run `winget search wpm` to confirm the ID and moniker are
 free, and confirm your `Publisher` string is plausibly yours — reviewers check it.
 
+The publisher display name is `anevilburrito`, and the planned package identifier is
+`anevilburrito.Wpm`. Publishing to the winget community repository does not require a
+separate winget publisher account or Microsoft Store developer registration. A GitHub
+account is needed to submit the manifest pull request to `microsoft/winget-pkgs` and
+follow its contribution process. The publisher name does not need to match the GitHub
+username; it is not an account or reserved namespace. Submission remains subject to
+repository policies and review. See [Microsoft's submission guide](https://learn.microsoft.com/en-us/windows/package-manager/package/).
+
+`YourHandle` in the GitHub URL examples below remains a placeholder for the actual
+repository owner; choosing a publisher name does not establish a GitHub account or
+repository URL. Confirm the owner and repository name before release.
+
 The crate name and the binary name are independent; `wpm` on crates.io is likely taken,
 but that has no bearing on the shim, the manifest, or the asset name.
 
@@ -28,14 +40,14 @@ but that has no bearing on the shim, the manifest, or the asset name.
 ## 2. Install path (winget portable)
 
 ```
-winget install YourHandle.Wpm
+winget install anevilburrito.Wpm
 ```
 
 What happens:
 
 | Item | Location |
 |---|---|
-| Binary (hardlink/symlink) | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\YourHandle.Wpm_<hash>\wpm.exe` |
+| Binary (hardlink/symlink) | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\anevilburrito.Wpm_<hash>\wpm.exe` |
 | Shim on PATH | `%LOCALAPPDATA%\Microsoft\WinGet\Links\wpm.exe` |
 | Config (created on first save, not on install) | `%APPDATA%\wpm\config.toml` |
 | Logs | only where `--log` points; no implicit file |
@@ -57,8 +69,8 @@ winget list wpm
 ### 2.2 Upgrade and uninstall
 
 ```powershell
-winget upgrade YourHandle.Wpm     # picks up new PackageVersion
-winget uninstall YourHandle.Wpm   # removes binary + shim; leaves %APPDATA%\wpm alone
+winget upgrade anevilburrito.Wpm     # picks up new PackageVersion
+winget uninstall anevilburrito.Wpm   # removes binary + shim; leaves %APPDATA%\wpm alone
 ```
 
 Uninstall does not remove the config directory by design — a reinstall should keep the
@@ -80,6 +92,7 @@ wpm [OPTIONS]
 |---|---|---|---|
 | `--rate <SECS>` | `2` | 0.25 – 60 | seconds between samples; warns below 1 (probe cost skews the reading) |
 | `--x-length <SECS>` | `300` | > `--rate` | seconds of history on the x-axis. Accepts a bare number (`300`) or a duration suffix (`5m`, `90s`) |
+| `--tray[=true\|false]` | `true` | boolean | show an icon alongside the interactive dashboard; `--tray=false` disables only the icon; ignored in noninteractive modes |
 | `--log <PATH>` | off | path | append CSV, schema in §4.1 |
 | `--json` | off | — | print one sample as JSON and exit |
 | `--ndjson` | off | — | stream one JSON object per line |
@@ -107,7 +120,8 @@ samples = ceil(x_length / rate)
 | `wpm --rate 5 --x-length 300` | 5m00s | 60 |
 | `wpm --rate 0.25 --x-length 300` | 5m00s | 1200 |
 | `wpm --rate 2 --x-length 1h` | 1h00m | 1800 |
-| `wpm --rate 300 --x-length 300` | — | 1 → **exit 2** (need ≥2 samples) |
+| `wpm --rate 60 --x-length 60` | — | 1 → **exit 2** (need ≥2 samples) |
+| `wpm --rate 0.25 --x-length 125000.25` | — | 500001 → **exit 2** (maximum 500000) |
 
 The sample count is shown in band A of the TUI, so the derived value is always visible
 rather than inferred.
@@ -115,7 +129,8 @@ rather than inferred.
 ### 3.4 Examples
 
 ```powershell
-wpm                                  # 5-minute window, 2 s cadence
+wpm                                  # dashboard + tray, 5-minute window, 2 s cadence
+wpm --tray=false                     # dashboard only
 wpm --rate 5 --x-length 300          # coarse sampling, same 5-minute window
 wpm --rate 1 --x-length 15m          # fine sampling, 15-minute window
 wpm --log C:\temp\power.csv          # also append CSV for Excel
@@ -129,6 +144,11 @@ wpm --ndjson | Tee-Object power.jsonl  # stream for logging
 
 `WPM_RATE`, `WPM_X_LENGTH`, `WPM_THEME`, `WPM_CONFIG` — same names as flags, overridden
 by flags. Precedence: **CLI > env > config file > default.**
+
+Output modes (`--json`, `--ndjson`, `--once`, `--self-test`) are mutually exclusive.
+Without an explicit output mode, non-TTY stdout selects one-shot JSON, never a TUI or
+tray icon. Config/error handling follows architecture §9: malformed files warn and
+fall back; out-of-range effective timing and invalid effective environment values exit 2.
 
 ### 3.6 Exit codes
 
@@ -222,7 +242,7 @@ jobs:
       - name: submit to winget
         run: |
           iwr https://aka.ms/wingetcreate/latest -OutFile wc.exe
-          .\wc.exe update YourHandle.Wpm --version ${{ github.ref_name }} `
+          .\wc.exe update anevilburrito.Wpm --version ${{ github.ref_name }} `
             --urls "https://github.com/YourHandle/wpm/releases/download/${{ github.ref_name }}/wpm-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe" `
             --submit --token ${{ secrets.WINGET_TOKEN }}
 ```
@@ -235,24 +255,24 @@ every field.
 
 ## 6. Manifests
 
-Three files under `manifests/y/YourHandle/Wpm/0.1.0/`. Use the latest supported
+Three files under `manifests/a/anevilburrito/Wpm/0.1.0/`. Use the latest supported
 `ManifestVersion` — the values below (1.6.0) are a safe baseline; check the schema docs
 before submitting.
 
-### 6.1 `YourHandle.Wpm.yaml`
+### 6.1 `anevilburrito.Wpm.yaml`
 
 ```yaml
-PackageIdentifier: YourHandle.Wpm
+PackageIdentifier: anevilburrito.Wpm
 PackageVersion: 0.1.0
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0
 ```
 
-### 6.2 `YourHandle.Wpm.installer.yaml`
+### 6.2 `anevilburrito.Wpm.installer.yaml`
 
 ```yaml
-PackageIdentifier: YourHandle.Wpm
+PackageIdentifier: anevilburrito.Wpm
 PackageVersion: 0.1.0
 ManifestType: installer
 ManifestVersion: 1.6.0
@@ -275,13 +295,13 @@ If a future release ships extra files (LICENSE, docs), switch to a zip:
         PortableCommandAlias: wpm
 ```
 
-### 6.3 `YourHandle.Wpm.locale.en-US.yaml`
+### 6.3 `anevilburrito.Wpm.locale.en-US.yaml`
 
 ```yaml
-PackageIdentifier: YourHandle.Wpm
+PackageIdentifier: anevilburrito.Wpm
 PackageVersion: 0.1.0
 PackageLocale: en-US
-Publisher: YourHandle
+Publisher: anevilburrito
 PublisherUrl: https://github.com/YourHandle
 PublisherSupportUrl: https://github.com/YourHandle/wpm/issues
 PackageName: wpm
@@ -315,20 +335,20 @@ ManifestVersion: 1.6.0
 
 1. **Local validation**
    ```powershell
-   winget validate --manifest .\manifests\y\YourHandle\Wpm\0.1.0
-   winget install --manifest .\manifests\y\YourHandle\Wpm\0.1.0
+   winget validate --manifest .\manifests\a\anevilburrito\Wpm\0.1.0
+   winget install --manifest .\manifests\a\anevilburrito\Wpm\0.1.0
    wpm --version
-   winget uninstall YourHandle.Wpm
+   winget uninstall anevilburrito.Wpm
    ```
 2. **Confirm the asset URL resolves anonymously** in a private browser window, and that
    its SHA-256 matches the manifest exactly.
 3. **Fork `microsoft/winget-pkgs`**, place the three files at
-   `manifests/y/YourHandle/Wpm/0.1.0/`, open a PR. The folder path is
+   `manifests/a/anevilburrito/Wpm/0.1.0/`, open a PR. The folder path is
    `<first letter>/<Publisher>/<Package>/<Version>`.
 4. Validation bots run manifest schema, URL, hash, and install checks. A **new package
    needs human moderator review** — expect days, not minutes. Subsequent version PRs are
    usually automerged.
-5. After merge: `winget install YourHandle.Wpm` works for everyone.
+5. After merge: `winget install anevilburrito.Wpm` works for everyone.
 
 Alternatively `wingetcreate submit --token <PAT>` handles the fork/PR mechanics.
 
@@ -336,7 +356,7 @@ Alternatively `wingetcreate submit --token <PAT>` handles the fork/PR mechanics.
 
 ## 8. Gotchas checklist
 
-- [ ] **`PackageIdentifier` is permanent.** Lock `YourHandle.Wpm` before the first PR.
+- [ ] **`PackageIdentifier` is permanent.** Lock `anevilburrito.Wpm` before the first PR.
 - [ ] **Release URLs must be immutable.** Tag-pinned `/releases/download/v0.1.0/…`, never
       `/releases/latest/…`. Never re-upload over a published asset — the manifest SHA goes
       stale and installs fail with a hash mismatch.
@@ -365,5 +385,5 @@ Alternatively `wingetcreate submit --token <PAT>` handles the fork/PR mechanics.
 2. `cargo test --locked`, commit, tag `vX.Y.Z`, push tag.
 3. Release workflow builds, signs, uploads, computes SHA, submits manifest.
 4. Verify the PR in `microsoft/winget-pkgs` merged.
-5. `winget upgrade YourHandle.Wpm` on a clean machine; run `wpm --self-test`.
+5. `winget upgrade anevilburrito.Wpm` on a clean machine; run `wpm --self-test`.
 6. Confirm the old release asset is still downloadable (never delete; users pin versions).

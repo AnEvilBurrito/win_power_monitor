@@ -83,6 +83,11 @@ Frame chrome: horizontal rules only, no outer border, no title box. Rules are dr
 
 ## 4. Default view (120 × 32, discharging)
 
+The ASCII mockups below are layout sketches, not numeric chart fixtures. Where their
+curve placement or labels conflict with §6, the signed rendering rules in §6 take
+precedence: discharging plots below zero, charging above zero. Charging statistics
+shown in §5.1 require `--all-states`; the default retains discharge-only statistics.
+
 ```
  wpm · Discharging · root\wmi · 2.0s · 5m00s · 150 pts · live            ? help
 ──────────────────────────────────────────────────────────────────────────────────
@@ -184,8 +189,11 @@ ETA becomes time-to-full. The chart's positive region fills.
 
 ### 5.2 Paused, with a sampling gap
 
-Pause freezes the ring and dims the chart. The status bar shows `⏸ PAUSED <duration>` at
-the right edge and the footer swaps to the resume affordance. A real sampling gap
+Pause freezes only the displayed dashboard snapshot and dims the chart. Sampling,
+age-based ring eviction, statistics, logging, and the tray remain live; resume displays
+the latest snapshot without inserting an artificial sampling gap. Export while paused
+uses the frozen displayed window. The status bar shows `⏸ PAUSED <duration>` at the right
+edge and the footer swaps to the resume affordance. A real sampling gap
 (suspend/resume, or a stalled provider, detected when `dt > 2 × rate`) renders `┊` at the
 gap position and is counted in band D as `N gap(s) (total)`. The line is never drawn
 through a gap.
@@ -257,7 +265,7 @@ structurally cannot express.
 | Discharging | negative | `↓` | below zero | `discharge` |
 | Charging | positive | `↑` | above zero, tinted block | `charge` |
 | AC / full (confirmed) | `0.00` | none | on the zero line | `neutral` |
-| Idle (no flow, no AC) | `0.00` | none | on the zero line | `neutral` |
+| Idle (confirmed zero battery flow) | `0.00` | none | on the zero line | `neutral` |
 | Unknown / unavailable | `—` | none | gap, no point plotted | `unknown` |
 
 Color is never the sole carrier of meaning (P3): the glyph and the sign both encode

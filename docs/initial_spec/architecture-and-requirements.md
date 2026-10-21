@@ -65,10 +65,10 @@ win_power_monitor/
 ├── .github/workflows/
 │   ├── ci.yml                 # fmt, clippy, test, cross-target check
 │   └── release.yml            # build, smoke test, sign, release, winget submit
-└── manifests/y/YourHandle/Wpm/0.1.0/
-    ├── YourHandle.Wpm.yaml
-    ├── YourHandle.Wpm.installer.yaml
-    └── YourHandle.Wpm.locale.en-US.yaml
+└── manifests/a/anevilburrito/Wpm/0.1.0/
+    ├── anevilburrito.Wpm.yaml
+    ├── anevilburrito.Wpm.installer.yaml
+    └── anevilburrito.Wpm.locale.en-US.yaml
 ```
 
 ---
@@ -80,7 +80,7 @@ win_power_monitor/
 | `main.rs` | process lifecycle, mode selection, terminal restoration, exit codes | hold domain logic |
 | `cli.rs` | flag surface, validation, error text | touch Windows APIs |
 | `config.rs` | TOML parsing, precedence | validate ranges (delegates to `cli`) |
-| `source/*` | all Windows API access | format output, know about TUI |
+| `source/*` | Windows measurement/provider API access | format output, know about TUI or tray |
 | `ring.rs` | retention and eviction by age | compute statistics |
 | `stats.rs` | aggregation, integration | read the clock directly (takes `Instant`s) |
 | `export.rs` | serialization, file lifecycle | decide *when* to export |
@@ -202,7 +202,7 @@ pub struct Sample {
 
 | Field | Primary | Fallback | Missing semantics |
 |---|---|---|---|
-| `watts` | `root\wmi` `BatteryStatus.DischargeRate` / `ChargeRate` (mW ÷ 1000, negated when discharging) | PDH `\Power Meter(*)\Power`; then capacity-delta integration | `None` unless AC/full is confirmed, where `0.0` is a real measurement |
+| `watts` | `root\wmi` `BatteryStatus.DischargeRate` / `ChargeRate` (mW ÷ 1000, negated when discharging) | PDH `\Power Meter(*)\Power`; then capacity-delta integration | `None` unless a valid measurement or confirmed zero battery flow is available |
 | `volts` | `BatteryStatus.Voltage` (mV ÷ 1000) | — | `volts == 0` → `None`, and `amps` becomes `None` |
 | `amps` | `watts / volts` | — | `None` when `volts` is `None` or `≤ 0` |
 | `pct` | `GetSystemPowerStatus.BatteryLifePercent` (255 = unknown) | `RemainingCapacity / FullChargedCapacity`; then `Win32_Battery.EstimatedChargeRemaining` | `None` |
@@ -211,13 +211,25 @@ pub struct Sample {
 | `cycles` | `BatteryCycleCount.CycleCount` | — | `None` |
 
 Zero and unknown are strictly distinct (`design-spec.md` P2). `watts == Some(0.0)`
-requires positive evidence of AC/full; a failed query yields `None`.
+requires positive evidence of zero battery flow (including confirmed AC/full or idle);
+a failed query or a power-online flag alone yields `None`.
 
 ### 5.2 Sign convention
 
 Negative = discharging, positive = charging. This is an intentional carry-over from the
 original PowerShell prototype (`$watts = -$b.DischargeRate / 1000`), and it is what makes
 the chart's zero baseline meaningful.
+
+### 5.3 Measurement scope
+
+Samples must identify `source` and `measurement_kind` (`battery_flow`,
+`system_power`, or `unavailable`). WMI and capacity-delta readings are battery flow;
+capacity-delta is explicitly estimated. PDH scope depends on the meter instance:
+only a verified whole-system meter is accepted as `system_power`; do not sum overlapping
+meters or silently substitute component power. Battery volts/amps must not be derived
+from a system-power reading. System consumption is nonnegative and not interpreted as
+charging power; state remains separate. Preserve the existing JSON fields when adding
+this metadata. A power-online flag alone does not establish measured zero battery flow.
 
 ---
 
@@ -303,8 +315,11 @@ user's control.
 
 ### 8.3 Non-TTY behaviour
 
-If stdout is not a TTY, absent an explicit mode flag, `wpm` behaves as `--once` and exits
-0. Launching the dashboard into a pipe would block a validation harness indefinitely.
+If stdout is not a TTY, absent an explicit output mode flag, `wpm` behaves as `--json`
+and exits 0 on a successful sample, including unavailable hardware. `--once` remains
+human-readable. `--json`, `--ndjson`, `--once`, and `--self-test` are mutually exclusive;
+explicit output modes take precedence over TTY detection and never create a tray icon.
+Launching the dashboard into a pipe would block a validation harness indefinitely.
 
 ---
 
@@ -324,6 +339,14 @@ log = ""            # empty = logging off
 Precedence: **CLI flag > environment variable (`WPM_RATE`, `WPM_X_LENGTH`) > config file
 > built-in default.** A malformed config file is a warning in band A, not a launch
 failure — a broken theme key must not prevent someone from seeing their battery.
+Unreadable or malformed files (including unknown keys or invalid field types) are
+ignored as a whole with a warning, sent to stderr before UI startup. A missing implicit
+default file is silent; a missing explicitly selected file warns. Valid TOML with
+out-of-range effective timing values, or invalid effective environment values, exits 2.
+Overridden lower-precedence values do not cause validation errors. Environment support
+is limited to `WPM_RATE`, `WPM_X_LENGTH`, `WPM_THEME`, and `WPM_CONFIG`; tray is controlled
+by CLI or config. Config history spans are numeric seconds; CLI/environment spans also
+accept `s`, `m`, and `h` suffixes. All timing values must be finite.
 
 ---
 
@@ -346,8 +369,8 @@ failure — a broken theme key must not prevent someone from seeing their batter
 | FR-01 | Launch `wpm` in PowerShell with no args → full dashboard plus numeric notification-area icon | manual, on a laptop |
 | FR-02 | `--rate <secs>` sets the sampling period | measured period within ±5% over 60 s |
 | FR-03 | `--x-length <secs>` sets the history span independent of `--rate` | at rate 5, span is exactly 300 s / 60 points |
-| FR-04 | `--rate ≥ --x-length` rejected with exit 2 and a message naming the sample count | `--rate 300 --x-length 300` → exit 2 |
-| FR-05 | Sample count estimates > 500k rejected with the computed number in the message | `--rate 0.25 --x-length 86400` → exit 2 |
+| FR-04 | `--rate ≥ --x-length` rejected with exit 2 and a message naming the sample count (for rates within 0.25–60 s) | `--rate 60 --x-length 60` → exit 2, estimated 1 sample |
+| FR-05 | Sample count estimates > 500k rejected with the computed number in the message | `--rate 0.25 --x-length 125000.25` → exit 2 (500001 samples); 86400 s is valid (345600) |
 | FR-06 | Ring evicts by age, so stalls shorten the span | suspend/resume test shows gap + shortened span |
 | FR-07 | Gaps (`dt > 2×rate`) break the line and are excluded from Wh | unit test on synthetic samples |
 | FR-08 | `session` and `window` stats both displayed, both state-scoped to discharging | compare against a hand-computed fixture |

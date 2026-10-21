@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build wpm release",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--release",
+				"--locked"
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build"
+		}
+	]
+}
