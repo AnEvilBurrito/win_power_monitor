@@ -2,7 +2,7 @@ use crate::{
     cli::Mode,
     config::Settings,
     export::Log,
-    model::{History, Sample, number},
+    model::{History, Metrics, Sample, number, stamp_completion},
     provider::Provider,
     tray::{Latest, Reading, Tray},
     ui,
@@ -75,10 +75,20 @@ pub fn run(settings: Settings) -> Result<u8, String> {
         // COM and the WMI connection must be created and dropped on this thread.
         let mut provider = Provider::new();
         let mut sequence = 0;
+        let mut metrics = Metrics::new(rate);
         let mut dropped = 0;
         let mut deadline = Instant::now();
         while !thread_stop.load(Ordering::Acquire) {
-            let mut s = provider.sample(start.elapsed().as_secs_f64());
+            let query_start = Instant::now();
+            let mut s = provider.sample(0.0);
+            let completed = Instant::now();
+            stamp_completion(
+                &mut s,
+                completed.duration_since(start).as_secs_f64(),
+                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                completed.duration_since(query_start).as_secs_f64() * 1000.0,
+            );
+            metrics.apply(&mut s);
             sequence += 1;
             if dropped > 0 {
                 s.diagnostics
@@ -102,10 +112,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             if single {
                 break;
             }
-            deadline += rate;
-            if deadline < Instant::now() {
-                deadline = Instant::now() + rate;
-            }
+            deadline = next_deadline(deadline, Instant::now(), rate);
             while !thread_stop.load(Ordering::Acquire) && Instant::now() < deadline {
                 std::thread::park_timeout(
                     deadline
@@ -137,7 +144,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 code = 3;
             }
             let result = match settings.mode {
-                Mode::Once => writeln!(stdout, "{:?}: {} W battery flow; {} V; {}%; {}{}", s.state, number(s.watts), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
+                Mode::Once => writeln!(stdout, "{:?}: {} W battery flow; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
                 Mode::SelfTest => {
                     let report = serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
                         "sample": s, "limitations": ["PDH and capacity-delta fallback not implemented", "multiple battery aggregation not implemented", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
@@ -311,4 +318,14 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     drop(sampler);
     drop(tray);
     Ok(code)
+}
+
+/// Keep cadence when a query fits; skip overruns without a catch-up query burst.
+pub fn next_deadline(previous: Instant, completed: Instant, rate: Duration) -> Instant {
+    let next = previous + rate;
+    if next < completed {
+        completed + rate
+    } else {
+        next
+    }
 }

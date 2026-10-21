@@ -18,6 +18,12 @@ pub struct Sample {
     pub amps: Option<f64>,
     pub pct: Option<f64>,
     pub eta_s: Option<u32>,
+    pub eta_source: Option<String>,
+    pub remaining_wh: Option<f64>,
+    pub drain_pct_hr: Option<f64>,
+    pub poll_count: u64,
+    pub unchanged_polls: u64,
+    pub query_ms: f64,
     pub ac_online: Option<bool>,
     pub battery_present: Option<bool>,
     pub source: String,
@@ -39,6 +45,12 @@ impl Sample {
             amps: None,
             pct: None,
             eta_s: None,
+            eta_source: None,
+            remaining_wh: None,
+            drain_pct_hr: None,
+            poll_count: 0,
+            unchanged_polls: 0,
+            query_ms: 0.0,
             ac_online: None,
             battery_present: None,
             source: "none".into(),
@@ -56,6 +68,9 @@ impl Sample {
 pub struct Stats {
     pub count: u64,
     pub sum: f64,
+    pub magnitude_sum: f64,
+    pub magnitude_min: Option<f64>,
+    pub magnitude_max: Option<f64>,
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub discharge_wh: f64,
@@ -74,6 +89,9 @@ impl Stats {
         if let Some(w) = s.watts.filter(|w| w.is_finite()) {
             self.count += 1;
             self.sum += w;
+            self.magnitude_sum += w.abs();
+            self.magnitude_min = Some(self.magnitude_min.map_or(w.abs(), |x| x.min(w.abs())));
+            self.magnitude_max = Some(self.magnitude_max.map_or(w.abs(), |x| x.max(w.abs())));
             self.min = Some(self.min.map_or(w, |x| x.min(w)));
             self.max = Some(self.max.map_or(w, |x| x.max(w)));
             if let Some(p) = previous.filter(|p| eligible(p) && p.state == s.state && !s.gap) {
@@ -89,6 +107,20 @@ impl Stats {
                 }
             }
         }
+    }
+    pub fn display_label(&self, absolute: bool) -> String {
+        if !absolute {
+            return self.label();
+        }
+        format!(
+            "avg {} min {} max {} W | out {:.3} in {:.3} Wh | {} valid",
+            number((self.count > 0).then(|| self.magnitude_sum / self.count as f64)),
+            number(self.magnitude_min),
+            number(self.magnitude_max),
+            self.discharge_wh,
+            self.charge_wh,
+            self.count
+        )
     }
     pub fn label(&self) -> String {
         format!(
@@ -130,10 +162,9 @@ impl History {
         }
     }
     pub fn push(&mut self, mut s: Sample) -> Sample {
-        s.gap = self
-            .previous
-            .as_ref()
-            .is_some_and(|p| s.elapsed_s - p.elapsed_s > self.rate.as_secs_f64() * 2.0);
+        s.gap = self.previous.as_ref().is_some_and(|p| {
+            s.elapsed_s <= p.elapsed_s || s.elapsed_s - p.elapsed_s > self.rate.as_secs_f64() * 2.0
+        });
         self.session
             .add(&s, self.previous.as_ref(), self.all, self.rate);
         self.previous = Some(s.clone());
@@ -164,4 +195,121 @@ impl History {
         }
         stats
     }
+}
+
+/// Bounded contiguous discharge window. Percentages are quantized, so a flat slope
+/// means no usable estimate, not zero consumption.
+pub struct Metrics {
+    points: VecDeque<(f64, f64)>,
+    previous: Option<Sample>,
+    count: u64,
+    unchanged: u64,
+    rate: Duration,
+}
+impl Metrics {
+    pub fn new(rate: Duration) -> Self {
+        Self {
+            points: VecDeque::new(),
+            previous: None,
+            count: 0,
+            unchanged: 0,
+            rate,
+        }
+    }
+    pub fn apply(&mut self, s: &mut Sample) {
+        self.count += 1;
+        let dt = self.previous.as_ref().map(|p| s.elapsed_s - p.elapsed_s);
+        s.gap = dt.is_some_and(|dt| dt <= 0.0 || dt > self.rate.as_secs_f64() * 2.0);
+        let same = self.previous.as_ref().is_some_and(|p| {
+            p.watts == s.watts
+                && p.volts == s.volts
+                && p.pct == s.pct
+                && p.state == s.state
+                && p.remaining_wh == s.remaining_wh
+                && p.ac_online == s.ac_online
+                && p.source == s.source
+        });
+        self.unchanged = if same && !s.gap {
+            self.unchanged + 1
+        } else {
+            0
+        };
+        s.poll_count = self.count;
+        s.unchanged_polls = self.unchanged;
+        s.drain_pct_hr = None;
+        if s.state != State::Discharging
+            || s.battery_present == Some(false)
+            || s.gap
+            || s.pct.is_none()
+        {
+            self.points.clear();
+        }
+        if s.state == State::Discharging && s.battery_present != Some(false) {
+            if let Some(pct) = s.pct.filter(|p| p.is_finite() && (0.0..=100.0).contains(p)) {
+                if self.points.back().is_some_and(|(_, p)| pct > *p) {
+                    self.points.clear();
+                }
+                self.points.push_back((s.elapsed_s, pct));
+                while self
+                    .points
+                    .front()
+                    .is_some_and(|(t, _)| *t < s.elapsed_s - 300.0)
+                    || self.points.len() > 1201
+                {
+                    self.points.pop_front();
+                }
+                if self.points.len() >= 2 && s.elapsed_s - self.points[0].0 >= 10.0 {
+                    let n = self.points.len() as f64;
+                    let origin = self.points[0].0;
+                    let mt = self.points.iter().map(|(t, _)| t - origin).sum::<f64>() / n;
+                    let mp = self.points.iter().map(|(_, p)| p).sum::<f64>() / n;
+                    let numerator = self
+                        .points
+                        .iter()
+                        .map(|(t, p)| (t - origin - mt) * (p - mp))
+                        .sum::<f64>();
+                    let denominator = self
+                        .points
+                        .iter()
+                        .map(|(t, _)| (t - origin - mt).powi(2))
+                        .sum::<f64>();
+                    let drain = -numerator / denominator * 3600.0;
+                    if drain.is_finite() && drain > 0.0 {
+                        s.drain_pct_hr = Some(drain);
+                    }
+                }
+            } else {
+                self.points.clear();
+            }
+            if s.eta_s.is_none() {
+                let capacity = s
+                    .remaining_wh
+                    .zip(s.watts)
+                    .filter(|(wh, w)| *wh >= 0.0 && *w < 0.0)
+                    .map(|(wh, w)| (wh / -w * 3600.0, "capacity/rate estimate"));
+                let slope = s
+                    .pct
+                    .zip(s.drain_pct_hr)
+                    .map(|(p, d)| (p / d * 3600.0, "percentage trend estimate"));
+                if let Some((seconds, source)) = capacity
+                    .or(slope)
+                    .filter(|(t, _)| t.is_finite() && *t >= 0.0 && *t < u32::MAX as f64)
+                {
+                    s.eta_s = Some(seconds.round() as u32);
+                    s.eta_source = Some(source.into());
+                }
+            }
+        } else {
+            s.eta_s = None;
+            s.eta_source = None;
+        }
+        self.previous = Some(s.clone());
+    }
+}
+
+/// Completion timestamps, not query-start timestamps, drive charts and integration.
+pub fn stamp_completion(s: &mut Sample, elapsed: f64, ts: String, query_ms: f64) {
+    s.elapsed_s = elapsed;
+    s.ts = ts;
+    s.query_ms = query_ms;
 }

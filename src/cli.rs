@@ -29,8 +29,12 @@ pub struct Cli {
     pub once: bool,
     #[arg(long)]
     pub self_test: bool,
-    #[arg(long = "abs")]
+    /// Display magnitudes (default); exports always retain signs
+    #[arg(long = "abs", conflicts_with = "signed")]
     pub absolute: bool,
+    /// Display signed battery flow (negative discharge, positive charge)
+    #[arg(long)]
+    pub signed: bool,
     #[arg(long)]
     pub step: bool,
     #[arg(long)]

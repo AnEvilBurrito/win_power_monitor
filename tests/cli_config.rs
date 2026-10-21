@@ -51,6 +51,10 @@ fn defaults_and_tray_switches() {
     assert_eq!(settings.x_length, Duration::from_secs(300));
     assert_eq!(settings.sample_count, 150);
     assert_eq!(settings.theme, Theme::Default);
+    assert!(settings.absolute);
+    assert!(resolve(&["--abs"], &[], true).unwrap().absolute);
+    assert!(!resolve(&["--signed"], &[], true).unwrap().absolute);
+    assert!(Cli::try_parse_from(["wpm", "--abs", "--signed"]).is_err());
     assert!(settings.tray);
     assert!(resolve(&["--tray"], &[], true).expect("tray").tray);
     assert!(!resolve(&["--tray=false"], &[], true).expect("no tray").tray);

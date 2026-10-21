@@ -17,6 +17,16 @@ pub struct Battery {
 pub fn valid(value: Option<u32>) -> Option<f64> {
     value.filter(|v| *v != u32::MAX).map(f64::from)
 }
+/// GetSystemPowerStatus remaining runtime is meaningful only on discharge.
+pub fn apply_kernel_eta(s: &mut Sample, seconds: u32) {
+    if s.state == State::Discharging && s.battery_present != Some(false) && seconds != u32::MAX {
+        s.eta_s = Some(seconds);
+        s.eta_source = Some("Windows reported".into());
+    } else {
+        s.eta_s = None;
+        s.eta_source = None;
+    }
+}
 pub fn apply_batteries(s: &mut Sample, batteries: &[Battery]) {
     let active: Vec<_> = batteries
         .iter()
@@ -54,6 +64,7 @@ pub fn apply_batteries(s: &mut Sample, batteries: &[Battery]) {
         }
         _ => None,
     };
+    s.remaining_wh = valid(b.remaining_capacity).map(|v| v / 1000.0);
     s.volts = valid(b.voltage).filter(|v| *v > 0.0).map(|v| v / 1000.0);
     s.amps = s.watts.zip(s.volts).map(|(w, v)| w / v);
     if s.ac_online.is_none() {
@@ -143,6 +154,8 @@ impl Provider {
                 self.error.as_deref().unwrap_or("unknown")
             ));
         }
+        let kernel_eta = s.eta_s.unwrap_or(u32::MAX);
+        apply_kernel_eta(&mut s, kernel_eta);
         if s.battery_present == Some(false) {
             s.reason = Some("no_battery".into());
         }

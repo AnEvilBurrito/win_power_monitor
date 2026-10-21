@@ -2,9 +2,32 @@
 
 **Document:** 1 of 3 — visual and interaction design
 **Companion docs:** `architecture-and-requirements.md`, `install-and-publishing.md`
-**Status:** draft, pre-implementation
+**Status:** design reference; implemented display updates noted below
 
 ---
+
+## Implemented display clarification
+
+Magnitude is now the default for KPI watts/current, chart and statistics. `--signed`
+selects the original signed convention; `--abs` explicitly selects magnitude and `a`
+toggles the display. Exports always retain signs. Direction/state remains explicit.
+The historical signed mockups below illustrate signed mode, not the default.
+
+The five implemented bands have no outer chart box. Narrow views omit volts/amps and
+reduce statistics height. The Y range includes zero; each occupied side is padded by
+10%, floored at 10 W and rounded outward to a 1/2/5 × power-of-ten endpoint. Empty
+ranges use 0–10 W. Tick labels are lower/midpoint/upper values; the zero line is
+independent, so magnitude ticks for 27.1 W are 0/25/50, never 0/0/30.
+
+Remaining time is discharge-only: Windows reported runtime, otherwise capacity/rate
+or percentage-trend estimates, explicitly labelled. Drain %/hr uses least squares
+on up to five minutes of contiguous valid discharge percentages, at least two points
+and ten seconds. Missing/gapped/charging/rising data resets the trend; flat slopes
+are unknown. Time-to-full, health/cycles, gauge and clock-time X ticks remain deferred.
+Poll count/completion age/query time/unchanged counts are diagnostics, not a claim
+that repeated readings prove firmware staleness. The tray uses 1–3 integer magnitude
+digits and decimal signed tooltip readings, rather than miniature decimal glyphs.
+These implementation clarifications supersede conflicting draft details below.
 
 ## 1. Purpose and scope
 

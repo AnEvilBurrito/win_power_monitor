@@ -121,7 +121,21 @@ Hard constraints:
 4. The ring prunes by age (`t < now − x_length`) so a stalled sampler shortens the span
    honestly rather than silently under-filling a fixed-capacity buffer.
 
-**Sampling schedule** — deadline based, not sleep-after-work:
+**Implemented timing and derived metrics.** The sampler stamps monotonic elapsed time
+and UTC at query completion, not at query start. Poll count, query duration and
+consecutive unchanged readings are published with samples; identical values do not
+prove staleness. Firmware refresh is independent of the requested 2 s polling cadence.
+When a query overruns a deadline, schedule the next query one interval after completion
+rather than issuing catch-up bursts. Energy always uses measured completion intervals.
+`Metrics` derives discharge-only drain using least squares (two or more percentage
+samples spanning at least ten seconds, bounded to five contiguous minutes). Missing
+percentages, gaps, charging and rising percentages reset it; a flat slope is unknown.
+ETA priority is kernel `BatteryLifeTime`, then `RemainingCapacity` / discharge rate,
+then percentage / positive drain. Sources are labelled, and charging ETA is unknown.
+No WMI `EstimatedRuntime` field is assumed. JSON exports add these metadata fields;
+legacy signed CSV columns are unchanged.
+
+**Sampling schedule** — deadline based, not sleep-after-work (conceptual sketch):
 
 ```rust
 let start = Instant::now();
@@ -156,7 +170,7 @@ closing the dashboard exits the process and removes the icon.
   bounded latest-value handoff for the tray, independently of the TUI channel. Slow
   shell updates must not block sampling or accumulate snapshots. Notify the tray
   window with a posted message; do not poll at the TUI frame rate.
-- Render a compact numeric wattage icon, for example `12.4`, at the notification
+- Render a compact numeric wattage icon, for example `12` (integer magnitude, at most three characters), at the notification
   area's current DPI. Round to fit; show the exact signed reading, unit, provider,
   charging/discharging state, and measurement meaning in the tooltip. Update on new
   samples at `--rate`, not on every dashboard frame.

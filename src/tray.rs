@@ -19,8 +19,9 @@ pub fn icon_text(reading: Option<&Reading>, now: Instant, rate: Duration) -> Str
         .filter(|r| now.saturating_duration_since(r.received) <= rate * 2)
         .and_then(|r| r.sample.watts)
     {
-        Some(w) if w.abs() < 100.0 => format!("{:.1}", w.abs()),
-        Some(w) => format!("{:.0}", w.abs()),
+        Some(w) if w.is_finite() && w.abs().round() <= 999.0 => format!("{:.0}", w.abs()),
+        Some(w) if w.is_finite() => "HI".into(),
+        Some(_) => "—".into(),
         None => "—".into(),
     }
 }
@@ -172,7 +173,7 @@ mod platform {
     // Opaque high-contrast DIB with a monochrome mask, all GDI ownership stays on this thread.
     unsafe fn numeric_icon(hwnd: HWND, text: &str) -> HICON {
         unsafe {
-            let dpi = GetDpiForWindow(hwnd).max(96);
+            let dpi = GetDpiForWindow(hwnd).max(GetDpiForSystem()).max(96);
             let size = GetSystemMetricsForDpi(SM_CXSMICON, dpi).max(16);
             let dc = CreateCompatibleDC(std::ptr::null_mut());
             if dc.is_null() {
@@ -201,12 +202,12 @@ mod platform {
             std::ptr::write_bytes(bits, 0, (size * size * 4) as usize);
             let old = SelectObject(dc, bitmap);
             let font = CreateFontW(
-                -(if text.len() >= 4 {
-                    size / 2
+                -(size * 9 / 10),
+                if text.chars().count() == 3 {
+                    size / 3
                 } else {
-                    size * 2 / 3
-                }),
-                0,
+                    0
+                },
                 0,
                 0,
                 FW_BOLD as i32,
@@ -218,7 +219,7 @@ mod platform {
                 0,
                 NONANTIALIASED_QUALITY as u32,
                 0,
-                wide("Segoe UI").as_ptr(),
+                wide("Consolas").as_ptr(),
             );
             let old_font = SelectObject(dc, font);
             SetTextColor(dc, 0x00ff_ffff);
@@ -354,6 +355,7 @@ mod platform {
         status: Arc<Mutex<String>>,
     ) {
         unsafe {
+            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             let name = wide("wpm.TrayWindow");
             let instance = GetModuleHandleW(std::ptr::null());
             let class = WNDCLASSW {

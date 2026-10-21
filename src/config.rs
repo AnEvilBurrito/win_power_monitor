@@ -124,7 +124,7 @@ impl Settings {
                 .clone()
                 .or_else(|| file.log.filter(|p| !p.is_empty()).map(PathBuf::from)),
             mode,
-            absolute: cli.absolute,
+            absolute: !cli.signed,
             step: cli.step,
             require_battery: cli.require_battery,
             warnings,

@@ -2,7 +2,8 @@
 
 A portable x64 Windows 10/11 terminal battery-flow monitor, with a default-enabled
 numeric notification-area icon. **Battery flow is not whole-system or wall power.**
-Negative watts mean discharge, positive watts charge. Missing driver data is `null`
+Displays default to watt/current magnitudes with direction shown separately. In signed mode
+and exports, negative watts mean discharge, positive watts charge. Missing driver data is `null`
 in JSON, empty CSV cells, and `—` in the UI/tray; missing data is never zero-filled.
 This is a test-deployment candidate, not a claim of full initial-spec completion.
 No measurement, provider, interactive dashboard, or native tray code was executed
@@ -52,7 +53,7 @@ Get-FileHash .\wpm.exe -Algorithm SHA256
    snapshot; sampling, statistics, logging and tray continue live. Resume returns to
    current data. `r` resets history/session stats, `e` writes the displayed window to
    timestamped CSV+JSON in the current directory, `l` toggles append logging
-   (`--log` path or `wpm.csv`). `a` toggles chart magnitude only; exports/stats stay signed.
+   (`--log` path or `wpm.csv`). `a` toggles magnitude/signed KPI, chart and statistics; exports always stay signed.
 7. Repeat with `--tray=false`. Check no icon appears. Repeat default launch and Exit
    from the tray, and again with Ctrl+C. Verify terminal echo/cursor are restored,
    logs are flushed and the icon disappears. Closing the console forcibly is not a
@@ -66,6 +67,23 @@ Get-FileHash .\wpm.exe -Algorithm SHA256
    missing watts; `--require-battery --json` returns exit 3 if presence cannot be
    confirmed. Keep both AC/battery diagnostic files for reports. Review hardware
    instance identifiers before sharing reports.
+
+## Windows launch permissions
+
+The executable embeds an `asInvoker` manifest: it requests the current user's rights,
+not administrator elevation. WMI access failures are reported after startup as missing
+measurements; they cannot cause Explorer's “Windows cannot access the specified device,
+path, or file” launch dialog.
+
+That dialog alone does not establish that elevation is required. On the test laptop,
+record the complete dialog with a photo if clipboard transfer is unavailable. Check
+that the copied file still exists, its size/hash matches the package, and its Properties
+> Security entry grants the current user Read & execute. Launch from a user-owned local
+folder permitted by the organization's policy, not directly from transfer media or a
+network share. Check Windows Security Protection history and, on managed devices, ask
+IT to inspect AppLocker/WDAC policy events for this executable. Do not disable protection
+or run as administrator as a workaround. Unsigned applications can be blocked by policy;
+an `asInvoker` manifest cannot override ACLs, antivirus, or application-control policy.
 
 ## CLI and configuration
 
@@ -83,7 +101,9 @@ transitions. Statistics use measured monotonic time and trapezoidal integration;
 missing endpoints and intervals over twice rate are excluded. Counts/averages are
 sample-weighted, not time-weighted. History is bounded both by age and count.
 
-`--abs` changes chart magnitude, `--step` enables stepped interpolation without
+`--signed` opts into signed KPI/chart/statistics; `--abs` explicitly selects the default
+magnitude display (mutually exclusive). `--once` also defaults to magnitude.
+`--step` enables stepped interpolation without
 bridging gaps; `--theme default|high-contrast|mono` changes chart color.
 `--tray[=true|false]` controls only the interactive tray (default true).
 
@@ -110,6 +130,41 @@ if unsure. Runtime logging errors disable logging and report to status/stderr.
 Startup log failure exits 4. Other runtime errors exit 1. Success, including missing
 measurements, exits 0; `--require-battery` without confirmed presence exits 3.
 
+## Display ranges, remaining battery and polling
+
+The five bands are status, current KPIs, borderless chart, session/window statistics,
+and controls. Magnitude statistics use absolute samples, not the absolute of a signed
+average; Wh in/out remain separate. Unknown values remain unknown.
+
+The Y range always includes zero. Each occupied side gets 10% headroom, at least
+10 W, rounded outward to the next 1/2/5 × power-of-ten endpoint. Magnitude mode has
+no negative side; an empty chart uses 0–10 W. Three ticks are lower bound, arithmetic
+midpoint, upper bound (not a hardcoded middle zero); the zero baseline is separate.
+For 27.1 W this gives 0, 25, 50 W; signed discharge alone gives −50, −25, 0 W.
+
+The tray shows rounded integer watt magnitude, at most three characters (27.1 → 27,
+99.9 → 100); ≥999.5 W shows `HI`, unknown/stale shows `—`. Bold solid Consolas
+uses almost the full DPI-scaled icon height. The tooltip retains decimal signed watts.
+Actual taskbar legibility must be checked remotely at the laptop's scaling setting.
+
+Remaining time is discharge-only: prefer Windows' reported `BatteryLifeTime`, then
+estimate `RemainingCapacity` (mWh) / current discharge (mW), then percentage / drain.
+All estimates name their source; no WMI `EstimatedRuntime` field is queried.
+Drain is a least-squares percentage slope over up to five contiguous minutes,
+requiring at least two valid samples spanning ten seconds. Flat/rising percentages,
+missing percentages, gaps and charging do not yield a drain estimate. Integer battery
+percentages may need minutes before changing; estimates are not runtime guarantees.
+No time-to-full is invented while charging.
+
+A 2 s setting schedules queries, not firmware refreshes. WMI may return the same
+reading for several queries; identical values do **not** establish stale firmware.
+Status shows poll count and last completion age; diagnostics also expose query duration
+and consecutive unchanged polls. Monotonic and UTC timestamps are captured **after**
+the provider query completes. Deadlines retain cadence when queries fit; overruns
+skip catch-up bursts. Energy uses actual completion-to-completion time, excluding gaps
+above twice the requested interval. Stale means no recent completed poll, not equality
+of readings. JSON contains timing/estimate metadata; legacy CSV columns stay unchanged.
+
 ## Implementation and known limits
 
 - WMI `ROOT\WMI BatteryStatus` is queried inside a dedicated COM-owning sampler.
@@ -121,8 +176,8 @@ measurements, exits 0; `--require-battery` without confirmed presence exits 3.
   unavailable watts rather than an unsafe sum. Missing/contradictory WMI direction
   flags yield unknown. Firmware refresh rates can be slower than sampling rates.
 - **Not implemented:** PDH/system-power meters, capacity-delta estimation,
-  full/design capacity, health/cycles, WMI percentage/ETA fallback, drain-rate/ETA
-  estimates, advanced responsive layouts or every visual detail of the draft spec.
+  full/design capacity, health/cycles, WMI percentage fallback, time-to-full,
+  advanced responsive layouts or every visual detail of the draft spec.
   Existing CLI flags are implemented as described above; no desktop wattage is
   fabricated. Diagnostics explicitly identify unimplemented fallback providers.
 - A failed WMI connection is not automatically reinitialized; restart after driver
