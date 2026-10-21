@@ -324,7 +324,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             },
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nETA: {}\nDrain: {} %/hr estimate · Health/cycles unavailable\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
+        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: statistics since launch or last r reset.\nWindow: latest --x-length period (5 minutes by default).\nScope: discharging readings only unless --all-states is enabled.\nETA: {}\nDrain: {} %/hr estimate · Health/cycles unavailable\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
     }
 }
 fn compact_eta(s: &Sample) -> String {
