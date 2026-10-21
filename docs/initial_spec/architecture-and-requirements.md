@@ -13,7 +13,7 @@
 | Language | Rust | single static `.exe`, no runtime dependency, negligible overhead while measuring power |
 | TUI | `ratatui` 0.29 + `crossterm` 0.28 | mature, Braille `Canvas` for sub-cell plotting |
 | Target | `x86_64-pc-windows-msvc` (arm64 as a later second installer entry) | winget portable |
-| Windows APIs | `windows` 0.59 (`Win32_System_Power`, `Win32_System_Performance`), `wmi` 0.15 | direct API access, no shell-outs |
+| Windows APIs | `windows` 0.59 (`Win32_System_Power`, `Win32_System_Performance`, `Win32_UI_Shell`, `Win32_UI_WindowsAndMessaging`, `Win32_Graphics_Gdi`), `wmi` 0.15 | direct API access, including notification-area icon, no shell-outs |
 | Distribution | winget portable, single `.exe` | no admin, no ARP pollution, trivial manifest |
 
 Deliberately avoided: shelling out to PowerShell/`powercfg` on the hot path (process
@@ -45,6 +45,7 @@ win_power_monitor/
 │   ├── stats.rs               # session + window aggregation, energy integration
 │   ├── export.rs              # CSV / NDJSON / JSON writers, BufWriter lifecycle
 │   ├── app.rs                 # event loop, sampler thread, key handling, state machine
+│   ├── tray.rs                # notification-area icon, Windows message loop, menu, cleanup
 │   ├── ui/
 │   │   ├── mod.rs             # band layout, responsive breakpoints, draw()
 │   │   ├── chart.rs           # Canvas renderer, envelope bucketing, gap markers
@@ -85,6 +86,7 @@ win_power_monitor/
 | `export.rs` | serialization, file lifecycle | decide *when* to export |
 | `app.rs` | orchestration, key dispatch, sampling thread | draw anything |
 | `ui/*` | pure rendering from immutable app state | mutate state or call APIs |
+| `tray.rs` | Windows message loop, `Shell_NotifyIconW`, numeric icon rendering, menu and icon lifecycle | query providers or compute statistics |
 
 The `ui` layer is a pure function of `(&App, &Frame)` — no I/O, no clock reads. This
 keeps the layout unit-testable against synthetic `Sample` vectors via ratatui's
@@ -94,7 +96,7 @@ keeps the layout unit-testable against synthetic `Sample` vectors via ratatui's
 
 ## 4. Concurrency model
 
-Two threads.
+Two threads when the tray is disabled; three when enabled (the interactive default).
 
 **Sampler thread** — owns the WMI connection and the ring buffer, sleeps on a deadline,
 and publishes snapshots to the UI thread over an `mpsc` channel.
@@ -136,6 +138,45 @@ loop {
 `Start-Sleep`-style drifting sleep makes `--rate 2` actually run at 2.1–2.3 s, which
 falsifies the x-axis span. Energy integration uses measured `dt` regardless, so a stall
 can never inflate Wh.
+
+---
+
+### 4.1 Windows notification area (system tray)
+
+Interactive `wpm` launches the dashboard **and** a notification-area icon by default
+(`--tray=true`). `--tray` is equivalent to `--tray=true`; `--tray=false` disables only
+the icon and leaves the dashboard running. This is not a tray-only/background mode:
+closing the dashboard exits the process and removes the icon.
+
+- A dedicated tray thread owns a hidden window, its Windows message loop, and all
+  icon resources. Use `Shell_NotifyIconW` to add, update, and delete the icon; handle
+  Explorer's `TaskbarCreated` message to restore it after Explorer restarts.
+- Reuse the existing sampler, never a second provider connection or sampling timer.
+  The sampler publishes the latest immutable reading, source, and timestamp to a
+  bounded latest-value handoff for the tray, independently of the TUI channel. Slow
+  shell updates must not block sampling or accumulate snapshots. Notify the tray
+  window with a posted message; do not poll at the TUI frame rate.
+- Render a compact numeric wattage icon, for example `12.4`, at the notification
+  area's current DPI. Round to fit; show the exact signed reading, unit, provider,
+  charging/discharging state, and measurement meaning in the tooltip. Update on new
+  samples at `--rate`, not on every dashboard frame.
+- Unknown readings show `—`, never zero. If the latest sample is older than twice
+  `--rate`, mark it stale and replace the numeric icon with `—`. A tray-thread timer
+  checks freshness even if the sampler stops publishing. Pausing the dashboard must
+  not leave an apparently live, frozen tray number.
+- Battery readings describe battery discharge/charge power, **not total computer
+  consumption**. AC/full `0 W` means no battery flow, not zero system draw. Only a
+  provider measuring system power may label the value as system consumption.
+- The context menu offers **Show dashboard** (restore/focus the existing console
+  window where supported) and **Exit**. Exit, `q`, and `Ctrl+C` share coordinated
+  shutdown: stop sampling, flush logs, delete the icon, release GDI/window resources,
+  and restore the terminal. No duplicate dashboard or sampler is spawned.
+- Icon initialization/update failures must not terminate the dashboard; report a
+  degraded tray status there. Windows controls icon placement and may initially hide
+  it in overflow; users can pin it to the visible notification area. No fixed-width
+  taskbar text or forced placement beside the clock is promised.
+- One-shot, streaming, diagnostic, and implicit non-TTY modes never create a tray
+  icon, even with `--tray=true`; their existing output and exit contracts take priority.
 
 ---
 
@@ -275,6 +316,7 @@ If stdout is not a TTY, absent an explicit mode flag, `wpm` behaves as `--once` 
 rate = 2.0          # seconds between samples
 x_length = 300      # seconds of history on the x-axis
 theme = "default"
+tray = true         # interactive dashboard also shows a notification-area icon
 all_states = false
 log = ""            # empty = logging off
 ```
@@ -301,7 +343,7 @@ failure — a broken theme key must not prevent someone from seeing their batter
 
 | ID | Requirement | Acceptance |
 |---|---|---|
-| FR-01 | Launch `wpm` in PowerShell with no args → full dashboard | manual, on a laptop |
+| FR-01 | Launch `wpm` in PowerShell with no args → full dashboard plus numeric notification-area icon | manual, on a laptop |
 | FR-02 | `--rate <secs>` sets the sampling period | measured period within ±5% over 60 s |
 | FR-03 | `--x-length <secs>` sets the history span independent of `--rate` | at rate 5, span is exactly 300 s / 60 points |
 | FR-04 | `--rate ≥ --x-length` rejected with exit 2 and a message naming the sample count | `--rate 300 --x-length 300` → exit 2 |
@@ -316,6 +358,11 @@ failure — a broken theme key must not prevent someone from seeing their batter
 | FR-13 | `q` and `Ctrl+C` restore the terminal and flush the log | manual + panic-hook test |
 | FR-14 | Degraded no-battery layout with stated reason and probe results | CI runner (no battery) |
 | FR-15 | Responsive breakpoints shed chrome in the documented order | `TestBackend` snapshot tests at 120/100/80/60 × 32/24/14 |
+| FR-16 | `--tray` defaults to true; `--tray=false` disables only the icon; config `tray` follows existing precedence | CLI/config tests and manual launch with both values |
+| FR-17 | Tray icon shows latest wattage at the sampling interval; tooltip identifies exact value, source, state, and battery versus system power | synthetic readings plus manual Windows 10/11 DPI checks |
+| FR-18 | Unknown/stale tray readings show `—`, not zero or a frozen live number | synthetic missing samples and sampler stall beyond `2 × rate` |
+| FR-19 | Tray reuses one sampler; Show dashboard restores/focuses where supported; Exit removes icon and flushes logs | manual menu, shutdown, and Explorer restart checks |
+| FR-20 | Noninteractive modes never create a tray icon; tray failure never kills the dashboard | mode-dispatch tests including explicit `--tray=true`, plus simulated shell failure |
 
 ---
 
@@ -343,7 +390,8 @@ failure — a broken theme key must not prevent someone from seeing their batter
 | CLI validation | table-driven tests for FR-04/FR-05 and exit codes |
 | Rendering | `TestBackend` snapshots at the breakpoint matrix, asserting band presence/absence rather than exact glyphs |
 | Windows integration | CI job on `windows-latest`: `--json` twice, `--ndjson` for 5 s, `--once`, `--self-test`; all must exit 0 on a battery-less runner |
-| Manual | suspend/resume gap handling, Excel file-lock behaviour, Windows Terminal vs conhost |
+| Tray | unit tests for numeric formatting, missing/stale readings, mode dispatch and config precedence; manual Windows 10/11 checks for DPI, overflow pinning, tooltip, menu, Explorer restart, shutdown cleanup and tray failure |
+| Manual | suspend/resume gap handling, Excel file-lock behaviour, Windows Terminal vs conhost; CPU/memory budgets include the default-enabled tray |
 
 The CI matrix deliberately includes the *no-battery* case, because that is exactly the
 environment winget validation uses.

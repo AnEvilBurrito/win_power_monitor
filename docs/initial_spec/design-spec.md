@@ -13,11 +13,14 @@ state, and rolling energy statistics. It is launched from PowerShell as `wpm` wi
 arguments and is configured by flags (`--rate`, `--x-length`) or a config file.
 
 In scope: real-time sampling, a single time-series chart, aggregate statistics, CSV/JSON
-export, and graceful degradation on machines without a battery.
+export, a default-enabled Windows notification-area wattage icon alongside the dashboard
+(`--tray=false` disables only the icon), and graceful degradation on machines without a
+battery. Tray behavior and lifecycle are defined in
+[architecture §4.1](./architecture-and-requirements.md#41-windows-notification-area-system-tray).
 
 Out of scope: per-process or per-component power attribution, long-term database
-storage, historical backfill from `powercfg /batteryreport`, GUI/system tray, remote
-telemetry, cross-platform support.
+storage, historical backfill from `powercfg /batteryreport`, standalone GUI or tray-only
+background mode, remote telemetry, cross-platform support.
 
 ---
 
