@@ -24,11 +24,13 @@ struct ConfigFile(std::path::PathBuf);
 impl ConfigFile {
     fn new(text: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "wpm-config-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let path = std::env::current_dir()
+            .expect("project directory")
+            .join(format!(
+                "wpm-config-{}-{}.toml",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
         std::fs::write(&path, text).expect("write fixture");
         Self(path)
     }

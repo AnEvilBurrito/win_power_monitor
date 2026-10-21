@@ -3,10 +3,12 @@
 Specification for **`wpm`** — a Windows terminal dashboard for live power consumption,
 battery life, and energy statistics, distributed via winget.
 
-The CLI/config foundation is implemented, with argument parsing, config precedence,
-timing validation, and mode selection covered by tests. Sampling, output modes, the TUI,
-and tray are not implemented yet: normal invocation currently reports that limitation
-on stderr and exits 1 rather than fabricating readings. `--help` and `--version` work.
+A laptop test-deployment candidate now implements WMI/kernel sampling, output modes,
+a terminal dashboard, statistics, CSV logging/export, and a default-enabled numeric
+tray icon. It is not yet the complete draft specification. See the
+[root README](../../README.md) for limitations, packaging, and the required remote-laptop
+acceptance procedure. No local hardware/provider/dashboard/tray execution was performed;
+synthetic tests and compilation are not a substitute for laptop verification.
 
 ## Documents
 
