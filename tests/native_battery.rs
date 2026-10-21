@@ -134,8 +134,8 @@ fn system_battery_filter_and_multiple_battery_safety() {
     assert_eq!(s.watts, Some(-12.0));
     let mut s = Sample::empty(0.0);
     assert!(!apply(&mut s, &[reading(), reading()]));
-    assert!(!s.available);
-    assert_eq!(s.reason.as_deref(), Some("multiple_native_batteries"));
+    assert!(s.available);
+    assert_eq!(s.watts, Some(-24.0));
 }
 #[test]
 fn missing_battery_allows_diagnostic_fallback() {

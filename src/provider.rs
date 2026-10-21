@@ -80,10 +80,9 @@ pub fn apply_batteries(s: &mut Sample, batteries: &[Battery]) {
 
 #[cfg(windows)]
 pub struct Provider {
-    connection: Option<wmi::WMIConnection>,
-    error: Option<String>,
     meter: Option<crate::power_meter::PowerMeter>,
     system_meter: Option<String>,
+    collector: crate::native_battery::Collector,
 }
 #[cfg(windows)]
 impl Default for Provider {
@@ -94,21 +93,10 @@ impl Default for Provider {
 #[cfg(windows)]
 impl Provider {
     pub fn new() -> Self {
-        let result = wmi::COMLibrary::new()
-            .and_then(|com| wmi::WMIConnection::with_namespace_path("ROOT\\WMI", com));
-        match result {
-            Ok(connection) => Self {
-                connection: Some(connection),
-                error: None,
-                meter: None,
-                system_meter: None,
-            },
-            Err(e) => Self {
-                connection: None,
-                error: Some(e.to_string()),
-                meter: None,
-                system_meter: None,
-            },
+        Self {
+            meter: None,
+            system_meter: None,
+            collector: Default::default(),
         }
     }
     pub fn with_system_meter(selected: Option<String>) -> Self {
@@ -117,24 +105,6 @@ impl Provider {
             ..Self::new()
         }
     }
-    fn enumerate_batteries(connection: &wmi::WMIConnection) -> wmi::WMIResult<Vec<Battery>> {
-        use windows::{
-            Win32::System::Wmi::{WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY},
-            core::BSTR,
-        };
-        // Diagnostic fallback only: enumeration does not establish fresh hardware data.
-        let enumerator = unsafe {
-            connection.svc.CreateInstanceEnum(
-                &BSTR::from("BatteryStatus"),
-                WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
-                None,
-            )?
-        };
-        wmi::result_enumerator::QueryResultEnumerator::new(connection, enumerator)
-            .map(|object| object.and_then(|object| object.into_desr::<Battery>()))
-            .collect()
-    }
-
     pub fn sample(&mut self, elapsed: f64) -> Sample {
         use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
         let mut s = Sample::empty(elapsed);
@@ -171,46 +141,15 @@ impl Provider {
                 .push(format!("k32: {}", std::io::Error::last_os_error()));
         }
         let kernel_eta = s.eta_s.unwrap_or(u32::MAX);
-        let fallback = match crate::native_battery::sample(&mut s.diagnostics) {
-            Ok(readings) => crate::native_battery::apply(&mut s, &readings),
-            Err(_) => true,
-        };
-        if fallback && s.battery_present != Some(false) {
-            // Do not mix native secondary values with a different WMI battery scope.
-            s.watts = None;
-            s.volts = None;
-            s.amps = None;
-            s.remaining_wh = None;
-            s.diagnostics
-                .push("wmi: fallback only; freshness unverified (may be cached)".into());
-            if let Some(connection) = &self.connection {
-                let started = std::time::Instant::now();
-                match Self::enumerate_batteries(connection) {
-                    Ok(batteries) => {
-                        s.diagnostics.push(format!(
-                            "wmi: CreateInstanceEnum BatteryStatus OK, {} row(s)",
-                            batteries.len()
-                        ));
-                        apply_batteries(&mut s, &batteries);
-                    }
-                    Err(e) => s.diagnostics.push(format!("wmi: query failed: {e}")),
-                }
-                s.diagnostics.push(format!(
-                    "wmi: CreateInstanceEnum/read {:.3}ms",
-                    started.elapsed().as_secs_f64() * 1000.0
-                ));
-            } else {
-                s.diagnostics.push(format!(
-                    "wmi: initialization failed: {}",
-                    self.error.as_deref().unwrap_or("unknown")
-                ));
-            }
-        } else {
-            s.diagnostics.push(
-                "wmi: not queried; native primary selected or unsafe fallback suppressed".into(),
-            );
+        self.collector.collect(
+            &mut crate::native_battery::WindowsBackend::default(),
+            &mut s,
+        );
+        s.diagnostics
+            .push("wmi: not queried; native collections never mixed or masked by fallback".into());
+        if s.battery_count == 1 && s.available && !s.transition {
+            apply_kernel_eta(&mut s, kernel_eta);
         }
-        apply_kernel_eta(&mut s, kernel_eta);
         if s.battery_present == Some(false) {
             let meter = self.meter.get_or_insert_with(|| {
                 crate::power_meter::PowerMeter::new(self.system_meter.clone())

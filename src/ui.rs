@@ -151,6 +151,8 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
     }
     let live = if v.paused {
         "PAUSED"
+    } else if v.latest.is_some_and(|s| s.transition) {
+        "TRANSITION"
     } else if v.stale {
         "NO RECENT POLL"
     } else {
@@ -173,7 +175,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         )
     } else {
         format!(
-            " wpm · {source} · {:.1}s · {:.0}s · {} pts · {live}",
+            " wpm · {live} · {source} · {:.1}s · {:.0}s · {} pts",
             v.rate,
             v.span,
             v.history.samples.len()
@@ -190,6 +192,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                 State::Discharging => "↓",
                 State::Charging => "↑",
                 State::Idle => "Idle",
+                State::Mixed => "Mixed",
                 State::Unknown => "Unknown",
             }
         };
@@ -226,7 +229,10 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         if s.is_system_power() {
             format!(" {watts} W system input · user-confirmed meter scope")
         } else {
-            format!(" {watts} W {direction}{electrical}   {gauge} {pct}%  ETA {eta}")
+            format!(
+                " {watts} W {direction} · {} batteries{electrical}   {gauge} {pct}%  ETA {eta}",
+                s.battery_count
+            )
         }
     } else {
         " Waiting for measured power".into()
@@ -294,7 +300,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         stats.push(Line::from(vec![
             Span::styled(" Energy  ", dim),
             Span::raw(format!(
-                "battery out {:.3} Wh · in {:.3} Wh · system {:.3} Wh",
+                "net battery out {:.3} Wh · in {:.3} Wh · system {:.3} Wh",
                 v.history.session.discharge_wh,
                 v.history.session.charge_wh,
                 v.history.session.system_wh
@@ -328,12 +334,30 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                     s.query_ms,
                     s.unchanged_polls,
                     s.reason.as_deref().unwrap_or(&s.measurement_kind),
-                    s.diagnostics.join("\n")
+                    format_args!(
+                        "{}\n{}",
+                        s.diagnostics.join("\n"),
+                        s.batteries
+                            .iter()
+                            .enumerate()
+                            .map(|(i, b)| format!(
+                                "Battery {}: {:?}, {} W, {} V, {} A, {} Wh, {}",
+                                i + 1,
+                                b.state,
+                                number(b.watts),
+                                number(b.volts),
+                                number(b.amps),
+                                number(b.remaining_wh),
+                                b.reason.as_deref().unwrap_or("available")
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
                 )
             },
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: statistics since launch or last r reset.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · health/cycles out of scope\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
+        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: historical statistics across battery sets since launch/reset; gaps separate epochs.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · health/cycles out of scope\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
     }
 }
 fn compact_eta(s: &Sample) -> String {

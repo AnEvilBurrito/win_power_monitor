@@ -17,6 +17,7 @@ pub type Latest = Arc<Mutex<Option<Reading>>>;
 pub fn icon_text(reading: Option<&Reading>, now: Instant, rate: Duration) -> String {
     match reading
         .filter(|r| now.saturating_duration_since(r.received) <= rate * 2)
+        .filter(|r| !r.sample.transition)
         .and_then(|r| r.sample.watts)
     {
         Some(w) if w.is_finite() && w.abs().round() <= 999.0 => format!("{:.0}", w.abs()),
@@ -29,16 +30,20 @@ pub fn tooltip(reading: Option<&Reading>, now: Instant, rate: Duration) -> Strin
     match reading {
         Some(r) => format!(
             "wpm {} W | {:?} | {} | {}{}",
-            number(if now.saturating_duration_since(r.received) > rate * 2 {
-                None
-            } else {
-                r.sample.watts
-            }),
+            number(
+                if now.saturating_duration_since(r.received) > rate * 2 || r.sample.transition {
+                    None
+                } else {
+                    r.sample.watts
+                }
+            ),
             r.sample.state,
             r.sample.source,
             r.sample.measurement_kind,
             if now.saturating_duration_since(r.received) > rate * 2 {
                 " | STALE"
+            } else if r.sample.transition {
+                " | TRANSITION"
             } else {
                 ""
             }

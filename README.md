@@ -21,11 +21,25 @@ A portable Windows terminal dashboard with a numeric tray icon, live charts, and
 
 **Battery flow is not whole-system or wall power.** On AC, a full battery can show little or no flow while the laptop still consumes power. Hardware and firmware determine which readings are available and how often they refresh.
 
+## Experimental multi-battery support
+
+**Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.**
+
+Native system batteries are deduplicated by Windows device instance ID and device-scoped tag. Combined watts are signed physical flow; mixed charge/discharge remains **Mixed**, including zero net flow. Multiple batteries have no combined voltage/current. Energy and capacity-weighted percentage require complete compatible absolute capacity metadata; mixed ETA is unavailable.
+
+Three fresh discovery/status passes bracket each collection (status IOCTL `Timeout=0`); membership, tags and direction/AC observations must agree. A failed or changing collection publishes unavailable, never partial/cached totals or WMI substitutes. The first stable sample after a transition is also unavailable; the following stable tick can recover. Calls are sequential, not an atomic hardware snapshot. Retries are bounded (at most two tag attempts per device per pass), but synchronous driver calls cannot be cancelled: a stalled driver can delay sampling/shutdown. No elevation is required.
+
+Topology epochs, invalid samples and long time gaps break charts/integration and reset estimators. Session/window statistics can include older sets; net battery energy is not gross per-battery throughput, and mixed energy is included only with `--all-states`. System input energy remains separate. Freeze affects only the displayed snapshot; sampling, logs and tray continue.
+
+JSON adds `topology_epoch`, `transition`, `battery_count`, collection start/end Unix seconds, and `batteries` with device IDs/tags, read availability/reasons, raw capacity/information metadata and electrical values. Review IDs before sharing diagnostics. CSV columns stay unchanged; consumers must accept the new `Mixed` state and null/unavailable transition fields. Main dashboard uses counts, not device identities. No physical location is inferred from enumeration order.
+
+Version 0.1.1 checkpoints experimental multi-battery support; the existing v0.1.0 tag is unchanged. Validation packages are unpublished candidates, not replacements for released assets.
+
 ## Install
 
 Requires **Windows 10 or 11 (x64)** and a supported laptop battery/driver for battery-flow readings. No Rust installation, separate runtime, service, or administrator elevation is required to run the portable executable; local security policies still apply.
 
-**Currently an unsigned v0.1.0 release candidate.**, eventually planned to publish over `Winget`. For now, build from source using the instructions below, or extract a supplied candidate ZIP into a writable folder after verifying its SHA-256 checksum.
+**Portable builds are unsigned.** Winget distribution is planned. For now, build from source using the instructions below, or extract a supplied candidate ZIP into a writable folder after verifying its SHA-256 checksum.
 
 
 ## Usage

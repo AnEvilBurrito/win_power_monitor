@@ -139,7 +139,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => break,
             };
-            s.gap = previous.is_some_and(|p| s.elapsed_s - p > rate.as_secs_f64() * 2.0);
+            s.gap |= previous.is_some_and(|p| s.elapsed_s - p > rate.as_secs_f64() * 2.0);
             previous = Some(s.elapsed_s);
             write_log(&mut log, &s, &mut status);
             if settings.require_battery && s.battery_present != Some(true) {
@@ -149,7 +149,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 Mode::Once => writeln!(stdout, "{:?}: {} W measured power; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
                 Mode::SelfTest => {
                     let report = serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
-                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "multiple battery aggregation not implemented", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
+                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
                     serde_json::to_writer_pretty(&mut stdout, &report).map_err(io::Error::other).and_then(|_| writeln!(stdout))
                 },
                 _ => serde_json::to_writer(&mut stdout, &s).map_err(io::Error::other).and_then(|_| writeln!(stdout)),

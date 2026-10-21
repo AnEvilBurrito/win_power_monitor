@@ -6,6 +6,7 @@ pub enum State {
     Charging,
     Discharging,
     Idle,
+    Mixed,
     Unknown,
 }
 #[derive(Clone, Debug, Serialize)]
@@ -33,6 +34,12 @@ pub struct Sample {
     pub reason: Option<String>,
     pub gap: bool,
     pub diagnostics: Vec<String>,
+    pub topology_epoch: u64,
+    pub transition: bool,
+    pub battery_count: usize,
+    pub collection_start_s: Option<f64>,
+    pub collection_end_s: Option<f64>,
+    pub batteries: Vec<crate::native_battery::BatteryDiagnostic>,
 }
 impl Sample {
     pub fn is_system_power(&self) -> bool {
@@ -63,6 +70,12 @@ impl Sample {
             reason: Some("no_valid_battery_rate".into()),
             gap: false,
             diagnostics: vec![],
+            topology_epoch: 0,
+            transition: false,
+            battery_count: 0,
+            collection_start_s: None,
+            collection_end_s: None,
+            batteries: vec![],
         }
     }
 }
@@ -101,9 +114,13 @@ impl Stats {
             if let Some(p) = previous.filter(|p| {
                 eligible(p)
                     && p.state == s.state
+                    && p.ac_online == s.ac_online
                     && p.source == s.source
                     && p.measurement_kind == s.measurement_kind
                     && !s.gap
+                    && !p.transition
+                    && !s.transition
+                    && p.topology_epoch == s.topology_epoch
             }) {
                 let dt = s.elapsed_s - p.elapsed_s;
                 if dt > 0.0
@@ -176,8 +193,12 @@ impl History {
         }
     }
     pub fn push(&mut self, mut s: Sample) -> Sample {
-        s.gap = self.previous.as_ref().is_some_and(|p| {
-            s.elapsed_s <= p.elapsed_s || s.elapsed_s - p.elapsed_s > self.rate.as_secs_f64() * 2.0
+        s.gap |= self.previous.as_ref().is_some_and(|p| {
+            s.transition
+                || p.transition
+                || s.topology_epoch != p.topology_epoch
+                || s.elapsed_s <= p.elapsed_s
+                || s.elapsed_s - p.elapsed_s > self.rate.as_secs_f64() * 2.0
         });
         self.session
             .add(&s, self.previous.as_ref(), self.all, self.rate);
@@ -233,7 +254,16 @@ impl Metrics {
     pub fn apply(&mut self, s: &mut Sample) {
         self.count += 1;
         let dt = self.previous.as_ref().map(|p| s.elapsed_s - p.elapsed_s);
-        s.gap = dt.is_some_and(|dt| dt <= 0.0 || dt > self.rate.as_secs_f64() * 2.0);
+        s.gap |= s.transition
+            || self.previous.as_ref().is_some_and(|p| {
+                p.transition
+                    || p.topology_epoch != s.topology_epoch
+                    || p.ac_online != s.ac_online
+                    || p.state != s.state
+                    || p.source != s.source
+                    || p.measurement_kind != s.measurement_kind
+            })
+            || dt.is_some_and(|dt| dt <= 0.0 || dt > self.rate.as_secs_f64() * 2.0);
         let same = self.previous.as_ref().is_some_and(|p| {
             p.watts == s.watts
                 && p.volts == s.volts
@@ -251,14 +281,23 @@ impl Metrics {
         s.poll_count = self.count;
         s.unchanged_polls = self.unchanged;
         s.drain_pct_hr = None;
+        if s.gap || s.transition || s.watts.is_none() {
+            s.eta_s = None;
+            s.eta_source = None;
+        }
         if s.state != State::Discharging
             || s.battery_present == Some(false)
             || s.gap
             || s.pct.is_none()
+            || s.watts.is_none()
         {
             self.points.clear();
         }
-        if s.state == State::Discharging && s.battery_present != Some(false) {
+        if s.state == State::Discharging
+            && s.battery_present != Some(false)
+            && !s.transition
+            && s.watts.is_some()
+        {
             if let Some(pct) = s.pct.filter(|p| p.is_finite() && (0.0..=100.0).contains(p)) {
                 if self.points.back().is_some_and(|(_, p)| pct > *p) {
                     self.points.clear();
@@ -295,7 +334,7 @@ impl Metrics {
             } else {
                 self.points.clear();
             }
-            if s.eta_s.is_none() {
+            if s.eta_s.is_none() && !s.gap {
                 let capacity = s
                     .remaining_wh
                     .zip(s.watts)
