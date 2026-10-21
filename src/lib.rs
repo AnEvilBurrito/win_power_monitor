@@ -3,6 +3,7 @@ pub mod cli;
 pub mod config;
 pub mod export;
 pub mod model;
+pub mod native_battery;
 pub mod provider;
 pub mod tray;
 pub mod ui;

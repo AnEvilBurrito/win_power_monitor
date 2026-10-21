@@ -1,5 +1,26 @@
 # wpm — Architecture & Requirements
 
+
+## Native refresh implementation update (2026-10-21)
+
+This implementation supersedes the draft WMI-first provider order and per-tick cost
+below. Each sampling tick enumerates present battery device interfaces (`SetupDi*`),
+opens synchronous handles, queries tag (wait=0), `BatteryInformation`, then
+`IOCTL_BATTERY_QUERY_STATUS` with `BATTERY_WAIT_STATUS.Timeout=0`. A tag mismatch
+retries once; each tick reopens/re-enumerates for hotplug, with RAII cleanup.
+Signed `Rate` is mW unless `BATTERY_CAPACITY_RELATIVE`; relative data must not become
+W/Wh/V/A. Unknown rate is `i32::MIN`, unknown capacity/voltage `u32::MAX`.
+Normal system batteries only; multiple native batteries suppress watts and fallback
+rather than selecting an arbitrary port, mixing scopes or double-counting.
+WMI enumeration is only an explicitly freshness-unverified fallback, with source
+`wmi:root\wmi:BatteryStatus:fallback_unverified` and measurement_kind
+`battery_flow_fallback_unverified`; native uses `native:IOCTL_BATTERY_QUERY_STATUS`
+and `battery_flow`. Per-request IOCTL and whole-query latency are diagnostic facts,
+not evidence of new firmware conversion. No PowerShell subprocess is used.
+See [README](../../README.md#standalone-remote-refresh-acceptance-required) for API
+references and required standalone acceptance with all reference loops closed.
+No target-battery refresh success is claimed from local no-battery execution.
+
 **Document:** 2 of 3 — repository layout, module design, functional and non-functional requirements
 **Companion docs:** `design-spec.md`, `install-and-publishing.md`
 **Status:** draft, pre-implementation

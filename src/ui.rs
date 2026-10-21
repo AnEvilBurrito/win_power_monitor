@@ -157,7 +157,9 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         "LIVE"
     };
     let source = v.latest.map_or("waiting", |s| match s.source.as_str() {
-        "wmi:root\\wmi:BatteryStatus" => "root\\wmi",
+        "native:IOCTL_BATTERY_QUERY_STATUS" => "Battery IOCTL",
+        "wmi:root\\wmi:BatteryStatus:fallback_unverified" => "WMI fallback (unverified)",
+        "wmi:root\\wmi:BatteryStatus" => "WMI",
         "k32:GetSystemPowerStatus" => "Win32",
         other => other,
     });

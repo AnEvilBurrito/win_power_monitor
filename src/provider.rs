@@ -71,8 +71,8 @@ pub fn apply_batteries(s: &mut Sample, batteries: &[Battery]) {
         s.ac_online = b.power_online;
     }
     if s.watts.is_some() {
-        s.source = "wmi:root\\wmi:BatteryStatus".into();
-        s.measurement_kind = "battery_flow".into();
+        s.source = "wmi:root\\wmi:BatteryStatus:fallback_unverified".into();
+        s.measurement_kind = "battery_flow_fallback_unverified".into();
         s.available = true;
         s.reason = None;
     }
@@ -105,6 +105,24 @@ impl Provider {
             },
         }
     }
+    fn enumerate_batteries(connection: &wmi::WMIConnection) -> wmi::WMIResult<Vec<Battery>> {
+        use windows::{
+            Win32::System::Wmi::{WBEM_FLAG_FORWARD_ONLY, WBEM_FLAG_RETURN_IMMEDIATELY},
+            core::BSTR,
+        };
+        // Diagnostic fallback only: enumeration does not establish fresh hardware data.
+        let enumerator = unsafe {
+            connection.svc.CreateInstanceEnum(
+                &BSTR::from("BatteryStatus"),
+                WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+                None,
+            )?
+        };
+        wmi::result_enumerator::QueryResultEnumerator::new(connection, enumerator)
+            .map(|object| object.and_then(|object| object.into_desr::<Battery>()))
+            .collect()
+    }
+
     pub fn sample(&mut self, elapsed: f64) -> Sample {
         use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
         let mut s = Sample::empty(elapsed);
@@ -140,21 +158,46 @@ impl Provider {
             s.diagnostics
                 .push(format!("k32: {}", std::io::Error::last_os_error()));
         }
-        if let Some(connection) = &self.connection {
-            match connection.raw_query::<Battery>("SELECT InstanceName, Active, Charging, Discharging, PowerOnline, ChargeRate, DischargeRate, Voltage, RemainingCapacity FROM BatteryStatus") {
-                Ok(batteries) => {
-                    s.diagnostics.push(format!("wmi: query OK, {} row(s)", batteries.len()));
-                    apply_batteries(&mut s, &batteries);
-                },
-                Err(e) => s.diagnostics.push(format!("wmi: query failed: {e}")),
+        let kernel_eta = s.eta_s.unwrap_or(u32::MAX);
+        let fallback = match crate::native_battery::sample(&mut s.diagnostics) {
+            Ok(readings) => crate::native_battery::apply(&mut s, &readings),
+            Err(_) => true,
+        };
+        if fallback {
+            // Do not mix native secondary values with a different WMI battery scope.
+            s.watts = None;
+            s.volts = None;
+            s.amps = None;
+            s.remaining_wh = None;
+            s.diagnostics
+                .push("wmi: fallback only; freshness unverified (may be cached)".into());
+            if let Some(connection) = &self.connection {
+                let started = std::time::Instant::now();
+                match Self::enumerate_batteries(connection) {
+                    Ok(batteries) => {
+                        s.diagnostics.push(format!(
+                            "wmi: CreateInstanceEnum BatteryStatus OK, {} row(s)",
+                            batteries.len()
+                        ));
+                        apply_batteries(&mut s, &batteries);
+                    }
+                    Err(e) => s.diagnostics.push(format!("wmi: query failed: {e}")),
+                }
+                s.diagnostics.push(format!(
+                    "wmi: CreateInstanceEnum/read {:.3}ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                ));
+            } else {
+                s.diagnostics.push(format!(
+                    "wmi: initialization failed: {}",
+                    self.error.as_deref().unwrap_or("unknown")
+                ));
             }
         } else {
-            s.diagnostics.push(format!(
-                "wmi: initialization failed: {}",
-                self.error.as_deref().unwrap_or("unknown")
-            ));
+            s.diagnostics.push(
+                "wmi: not queried; native primary selected or unsafe fallback suppressed".into(),
+            );
         }
-        let kernel_eta = s.eta_s.unwrap_or(u32::MAX);
         apply_kernel_eta(&mut s, kernel_eta);
         if s.battery_present == Some(false) {
             s.reason = Some("no_battery".into());

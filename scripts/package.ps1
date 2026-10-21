@@ -9,6 +9,7 @@ try {
     New-Item -ItemType Directory -Force $package | Out-Null
     Copy-Item "target\$Target\release\wpm.exe" "$package\wpm.exe" -Force
     Copy-Item README.md "$package\README.md" -Force
+    Copy-Item scripts\capture-reference.ps1 "$package\capture-reference.ps1" -Force
     $hash = (Get-FileHash "$package\wpm.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  wpm.exe" | Set-Content "$package\SHA256SUMS.txt" -Encoding ascii
     $zip = Join-Path $root 'dist\wpm-windows-x64.zip'

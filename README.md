@@ -6,8 +6,8 @@ Displays default to watt/current magnitudes with direction shown separately. In 
 and exports, negative watts mean discharge, positive watts charge. Missing driver data is `null`
 in JSON, empty CSV cells, and `—` in the UI/tray; missing data is never zero-filled.
 This is a test-deployment candidate, not a claim of full initial-spec completion.
-No measurement, provider, interactive dashboard, or native tray code was executed
-on the development machine. Hardware and shell behavior require the procedure below.
+The native provider has been executed locally on a machine without a battery.
+Target-laptop refresh behavior and interactive dashboard/tray behavior remain unverified.
 
 ## Copy to another laptop and test
 
@@ -67,6 +67,71 @@ Get-FileHash .\wpm.exe -Algorithm SHA256
    missing watts; `--require-battery --json` returns exit 3 if presence cannot be
    confirmed. Keep both AC/battery diagnostic files for reports. Review hardware
    instance identifiers before sharing reports.
+
+## Investigating refresh differences against PowerShell
+
+The primary path now enumerates present battery interfaces through `SetupDi*`, opens
+synchronous `CreateFileW` handles, and issues **IOCTL_BATTERY_QUERY_STATUS on every
+tick**, with `BATTERY_WAIT_STATUS.Timeout=0` and the current battery tag. It is not a
+WMI enumeration/reconnection refresh workaround and never spawns PowerShell.
+Each tick also requests the tag (wait=0) and `BatteryInformation` capabilities.
+Tag mismatch errors (2/433) retry the complete tag/information/status sequence once.
+Interfaces are re-enumerated/reopened next tick for hotplug; RAII closes device and
+SetupAPI handles on every exit path. Incomplete native sets are discarded, not summed.
+
+`BATTERY_STATUS.Rate` is signed mW: divide by 1000 for W, without flipping its sign.
+`i32::MIN` means unknown, not huge discharge. Capacity/voltage `u32::MAX` are unknown;
+zero voltage is unusable for amps. Contradictory direction flags/rate signs are not
+accepted. Only normal system batteries are selected (not UPS/short-term devices).
+Multiple system batteries deliberately suppress watts and WMI fallback; no duplicate
+or partial aggregate is invented. `BATTERY_CAPACITY_RELATIVE` suppresses W/Wh/V/A and
+WMI fallback rather than fabricating physical units.
+
+A successful native watt reading has source `native:IOCTL_BATTERY_QUERY_STATUS` and
+measurement_kind `battery_flow`. If native status/rate is unavailable, the diagnostic
+WMI fallback is explicitly `wmi:root\wmi:BatteryStatus:fallback_unverified` with
+measurement_kind `battery_flow_fallback_unverified`. It may be cached; availability
+means a numeric reading exists, **not** that hardware refreshed. Native and WMI
+secondary measurements are not mixed. No WMI query runs when native is selected.
+The UI uses a generic provider label (`Battery IOCTL` or `WMI fallback (unverified)`).
+
+### Standalone remote refresh acceptance (required)
+
+1. Close `docs\initial_spec\power_measure.ps1`, `capture-reference.ps1`, and every
+   other battery-polling reference/monitor. A simultaneous PowerShell loop previously
+   masked the bug; simultaneous agreement is **not acceptance**.
+2. Unplug AC and run only the extracted new executable for at least two minutes:
+
+```powershell
+.\wpm.exe --ndjson --rate 2 > .\standalone-native.ndjson
+```
+
+3. Alternate normal idle and a normal existing workload every 20–30 seconds, recording
+   the transition times. Press Ctrl+C after the run. Confirm each tick's diagnostics
+   contains successful `IOCTL_BATTERY_QUERY_STATUS Timeout=0`, tag and capabilities,
+   and that source/measurement_kind select native, not WMI fallback. Review signed
+   watts around the transitions for the previous ~20 s plateau. Identical values do
+   not by themselves prove staleness or freshness. `query_ms` is whole-sample latency;
+   per-IOCTL diagnostics time actual completed requests, not UI redraws.
+4. Repeat AC disconnect/reconnect and, where practical, suspend/resume/hotplug. Check
+   unknown values, bounded tag retries, and recovery on later ticks. Do not count a
+   fallback run as proof that the native refresh bug is resolved.
+5. Stop wpm entirely, then capture the reference **separately** with
+   `.\capture-reference.ps1 -Samples 60 -OutputPath .\reference-alone.csv` under the
+   same workload schedule. Compare transition behavior and raw mW/1000. Repeat the
+   standalone native run with the reference closed. Follow approved script policy.
+
+Microsoft documents immediate status return, not a guaranteed new EC/firmware conversion
+per request. No target-laptop freshness improvement is asserted until this standalone
+procedure passes. Local no-battery execution cannot prove target hardware behavior.
+
+API references:
+- [Battery interfaces and tags](https://learn.microsoft.com/en-us/windows/win32/power/battery-information)
+- [Enumerating battery devices](https://learn.microsoft.com/en-us/windows/win32/power/enumerating-battery-devices)
+- [IOCTL_BATTERY_QUERY_STATUS](https://learn.microsoft.com/en-us/windows/win32/power/ioctl-battery-query-status)
+- [BATTERY_WAIT_STATUS: zero timeout](https://learn.microsoft.com/en-us/windows/win32/power/battery-wait-status-str)
+- [BATTERY_STATUS: signed rate and unknowns](https://learn.microsoft.com/en-us/windows/win32/power/battery-status-str)
+- [BATTERY_INFORMATION: relative units/capabilities](https://learn.microsoft.com/en-us/windows/win32/power/battery-information-str)
 
 ## Windows launch permissions
 
@@ -167,22 +232,22 @@ of readings. JSON contains timing/estimate metadata; legacy CSV columns stay unc
 
 ## Implementation and known limits
 
-- WMI `ROOT\WMI BatteryStatus` is queried inside a dedicated COM-owning sampler.
-  Kernel `GetSystemPowerStatus` supplies battery presence, AC status, percentage,
-  runtime seconds and fallback state. WMI milliwatts/millivolts convert to W/V.
-  `u32::MAX` is unknown; zero voltage is unknown. Idle zero watts requires both
-  charge/discharge rates explicitly zero, not merely AC online.
-- Only one active battery is supported. Multiple batteries deliberately yield
-  unavailable watts rather than an unsafe sum. Missing/contradictory WMI direction
-  flags yield unknown. Firmware refresh rates can be slower than sampling rates.
+- Native battery-class IOCTL status is primary; WMI `ROOT\WMI BatteryStatus` is
+  a clearly labelled, freshness-unverified fallback on the COM-owning sampler thread.
+  Kernel `GetSystemPowerStatus` supplies system presence, AC, percentage and runtime.
+  Signed native rate, relative-unit gating, tag retry and hotplug behavior are described
+  above. Both providers measure battery flow, not whole-system or wall consumption.
+- Only one normal system battery is supported natively, or one active WMI fallback
+  battery. Multiple batteries yield unavailable watts rather than an unsafe sum.
+  Driver/firmware refresh can still be slower than sampling; target testing is required.
 - **Not implemented:** PDH/system-power meters, capacity-delta estimation,
   full/design capacity, health/cycles, WMI percentage fallback, time-to-full,
   advanced responsive layouts or every visual detail of the draft spec.
   Existing CLI flags are implemented as described above; no desktop wattage is
   fabricated. Diagnostics explicitly identify unimplemented fallback providers.
 - A failed WMI connection is not automatically reinitialized; restart after driver
-  or permission changes. WMI calls have no reliable cancellation; a stuck Windows
-  provider may delay exit (including Ctrl+C). Tray uses its own freshness timer.
+  or permission changes. WMI and synchronous device calls have no application cancellation; a stuck Windows
+  provider/driver may delay exit (including Ctrl+C). Tray uses its own freshness timer.
 - Tray uses a dedicated hidden-window/message thread, bounded latest-reading slot,
   per-window DPI-aware numeric bitmap, unknown/stale indication (older than 2x rate),
   Explorer restart handling and GDI cleanup. Numeric icon shows magnitude; tooltip
@@ -199,7 +264,7 @@ of readings. JSON contains timing/estimate metadata; legacy CSV columns stay unc
   The static CRT is requested for the x64 MSVC build; Windows system DLLs remain
   normal OS dependencies. No installer, signing, update mechanism or telemetry.
 
-## Build and package (does not run wpm)
+## Build and package (packaging does not run wpm)
 
 Requires Rust MSVC stable and Visual Studio C++ build tools/Windows SDK.
 

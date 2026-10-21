@@ -1378,6 +1378,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "windows",
  "windows-sys 0.59.0",
  "wmi",
 ]

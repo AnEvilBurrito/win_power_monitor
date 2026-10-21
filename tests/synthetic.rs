@@ -29,7 +29,8 @@ fn provider_conversion_and_unknowns() {
     assert_eq!(s.watts, Some(-12.4));
     assert_eq!(s.volts, Some(15.5));
     assert_eq!(s.amps, Some(-0.8));
-    assert_eq!(s.measurement_kind, "battery_flow");
+    assert_eq!(s.measurement_kind, "battery_flow_fallback_unverified");
+    assert_eq!(s.source, "wmi:root\\wmi:BatteryStatus:fallback_unverified");
     assert!(s.available);
     let mut unknown = sample(0.0, None);
     apply_batteries(

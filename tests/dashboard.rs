@@ -23,7 +23,7 @@ fn history() -> History {
 fn sample(t: f64, watts: Option<f64>) -> Sample {
     let mut s = Sample::empty(t);
     s.state = State::Discharging;
-    s.source = "wmi:root\\wmi:BatteryStatus".into();
+    s.source = "native:IOCTL_BATTERY_QUERY_STATUS".into();
     s.watts = watts;
     s.volts = Some(15.62);
     s.amps = Some(-0.794);
@@ -141,7 +141,7 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
     state.advance(100.0, 300.0, &h, true);
     for (w, height) in [(120, 32), (100, 24), (80, 24), (80, 14), (60, 14)] {
         let b = render(w, height, &h, &state, false, false, false);
-        assert!(row(&b, 0).contains("root\\wmi"));
+        assert!(row(&b, 0).contains("Battery IOCTL"));
         assert!(row(&b, 0).contains("? help"));
         assert!(row(&b, 0).contains("LIVE"));
         assert!(row(&b, 2).contains("12.40 W ↓"));
