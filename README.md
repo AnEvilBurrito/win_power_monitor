@@ -4,7 +4,7 @@
 
 A lightweight, portable Windows terminal dashboard with a numeric tray icon, live charts, and simple exports.
 
-**Windows 10/11 · x64**
+**Windows 10/11 · x64 · Laptops**
 
 ![wpm terminal dashboard showing battery flow, history, and session statistics](docs/promo.png)
 
