@@ -35,6 +35,9 @@ pub struct Sample {
     pub diagnostics: Vec<String>,
 }
 impl Sample {
+    pub fn is_system_power(&self) -> bool {
+        self.measurement_kind == "system_input_power_user_confirmed"
+    }
     pub fn empty(elapsed_s: f64) -> Self {
         Self {
             ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -75,6 +78,7 @@ pub struct Stats {
     pub max: Option<f64>,
     pub discharge_wh: f64,
     pub charge_wh: f64,
+    pub system_wh: f64,
     pub covered_s: f64,
 }
 impl Stats {
@@ -82,7 +86,7 @@ impl Stats {
         (self.count > 0).then(|| self.sum / self.count as f64)
     }
     pub fn add(&mut self, s: &Sample, previous: Option<&Sample>, all: bool, rate: Duration) {
-        let eligible = |s: &Sample| all || s.state == State::Discharging;
+        let eligible = |s: &Sample| all || s.state == State::Discharging || s.is_system_power();
         if !eligible(s) {
             return;
         }
@@ -94,15 +98,25 @@ impl Stats {
             self.magnitude_max = Some(self.magnitude_max.map_or(w.abs(), |x| x.max(w.abs())));
             self.min = Some(self.min.map_or(w, |x| x.min(w)));
             self.max = Some(self.max.map_or(w, |x| x.max(w)));
-            if let Some(p) = previous.filter(|p| eligible(p) && p.state == s.state && !s.gap) {
+            if let Some(p) = previous.filter(|p| {
+                eligible(p)
+                    && p.state == s.state
+                    && p.source == s.source
+                    && p.measurement_kind == s.measurement_kind
+                    && !s.gap
+            }) {
                 let dt = s.elapsed_s - p.elapsed_s;
                 if dt > 0.0
                     && dt <= rate.as_secs_f64() * 2.0
                     && let Some(pw) = p.watts.filter(|w| w.is_finite())
                 {
                     let wh = (w + pw) * 0.5 * dt / 3600.0;
-                    self.discharge_wh += (-wh).max(0.0);
-                    self.charge_wh += wh.max(0.0);
+                    if s.is_system_power() {
+                        self.system_wh += wh.max(0.0);
+                    } else {
+                        self.discharge_wh += (-wh).max(0.0);
+                        self.charge_wh += wh.max(0.0);
+                    }
                     self.covered_s += dt;
                 }
             }

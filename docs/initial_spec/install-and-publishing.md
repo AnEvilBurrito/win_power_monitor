@@ -1,3 +1,10 @@
+> Historical design reference, not the v0.1.0 capability contract. README.md at
+> repository root is authoritative for the bounded MVP: native battery flow,
+> explicitly user-confirmed hardware PDH system-input meters on battery-absent PCs,
+> no health/cycles/time-to-full or multiple-battery aggregation. Unsigned private
+> candidate only; GPL-3.0-only selected; publication not yet authorized.
+> Proposed installer/publishing plans below are not implemented release promises.
+
 # wpm — Install Path, Invocation & winget Publishing
 
 **Document:** 3 of 3 — distribution, command surface, and the winget submission process
@@ -306,7 +313,7 @@ PublisherUrl: https://github.com/YourHandle
 PublisherSupportUrl: https://github.com/YourHandle/wpm/issues
 PackageName: wpm
 PackageUrl: https://github.com/YourHandle/wpm
-License: MIT
+License: GPL-3.0-only
 LicenseUrl: https://github.com/YourHandle/wpm/blob/main/LICENSE
 ShortDescription: Live power draw, battery life and energy statistics in your terminal.
 Description: |

@@ -1,3 +1,10 @@
+> Historical design reference, not the v0.1.0 capability contract. README.md at
+> repository root is authoritative for the bounded MVP: native battery flow,
+> explicitly user-confirmed hardware PDH system-input meters on battery-absent PCs,
+> no health/cycles/time-to-full or multiple-battery aggregation. Unsigned private
+> candidate only; GPL-3.0-only selected; publication not yet authorized.
+> Proposed installer/publishing plans below are not implemented release promises.
+
 # win_power_monitor
 
 Specification for **`wpm`** — a Windows terminal dashboard for live power consumption,

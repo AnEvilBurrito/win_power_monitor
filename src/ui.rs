@@ -183,11 +183,15 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
     frame.render_widget(Paragraph::new(left), top[0]);
     frame.render_widget(Paragraph::new("? help").style(dim).right_aligned(), top[1]);
     let kpi = if let Some(s) = v.latest {
-        let direction = match s.state {
-            State::Discharging => "↓",
-            State::Charging => "↑",
-            State::Idle => "Idle",
-            State::Unknown => "Unknown",
+        let direction = if s.is_system_power() {
+            "system input"
+        } else {
+            match s.state {
+                State::Discharging => "↓",
+                State::Charging => "↑",
+                State::Idle => "Idle",
+                State::Unknown => "Unknown",
+            }
         };
         let value = |n: Option<f64>| {
             number(
@@ -219,9 +223,13 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         } else {
             compact_eta(s)
         };
-        format!(" {watts} W {direction}{electrical}   {gauge} {pct}%  ETA {eta}")
+        if s.is_system_power() {
+            format!(" {watts} W system input · user-confirmed meter scope")
+        } else {
+            format!(" {watts} W {direction}{electrical}   {gauge} {pct}%  ETA {eta}")
+        }
     } else {
-        " Waiting for battery flow — not system/wall draw".into()
+        " Waiting for measured power".into()
     };
     frame.render_widget(
         Paragraph::new(kpi).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
@@ -286,10 +294,11 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         stats.push(Line::from(vec![
             Span::styled(" Energy  ", dim),
             Span::raw(format!(
-                "out {:.3} Wh · in {:.3} Wh",
-                v.history.session.discharge_wh, v.history.session.charge_wh
+                "battery out {:.3} Wh · in {:.3} Wh · system {:.3} Wh",
+                v.history.session.discharge_wh,
+                v.history.session.charge_wh,
+                v.history.session.system_wh
             )),
-            Span::styled("   Health — · Cycles —", dim),
         ]));
     }
     frame.render_widget(Paragraph::new(stats), rows[6]);
@@ -318,15 +327,13 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                     (v.now - s.elapsed_s).max(0.0),
                     s.query_ms,
                     s.unchanged_polls,
-                    s.reason
-                        .as_deref()
-                        .unwrap_or("battery flow, not system/wall draw"),
+                    s.reason.as_deref().unwrap_or(&s.measurement_kind),
                     s.diagnostics.join("\n")
                 )
             },
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: statistics since launch or last r reset.\nWindow: latest --x-length period (5 minutes by default).\nScope: discharging readings only unless --all-states is enabled.\nETA: {}\nDrain: {} %/hr estimate · Health/cycles unavailable\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
+        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: statistics since launch or last r reset.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · health/cycles out of scope\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
     }
 }
 fn compact_eta(s: &Sample) -> String {

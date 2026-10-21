@@ -72,9 +72,10 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     let start = Instant::now();
     let wall_start = chrono::Utc::now();
     let single = matches!(settings.mode, Mode::Json | Mode::Once | Mode::SelfTest);
+    let system_meter = settings.system_meter.clone();
     let thread = std::thread::spawn(move || {
         // COM and the WMI connection must be created and dropped on this thread.
-        let mut provider = Provider::new();
+        let mut provider = Provider::with_system_meter(system_meter);
         let mut sequence = 0;
         let mut metrics = Metrics::new(rate);
         let mut dropped = 0;
@@ -145,10 +146,10 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 code = 3;
             }
             let result = match settings.mode {
-                Mode::Once => writeln!(stdout, "{:?}: {} W battery flow; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
+                Mode::Once => writeln!(stdout, "{:?}: {} W measured power; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
                 Mode::SelfTest => {
                     let report = serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
-                        "sample": s, "limitations": ["PDH and capacity-delta fallback not implemented", "multiple battery aggregation not implemented", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
+                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "multiple battery aggregation not implemented", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
                     serde_json::to_writer_pretty(&mut stdout, &report).map_err(io::Error::other).and_then(|_| writeln!(stdout))
                 },
                 _ => serde_json::to_writer(&mut stdout, &s).map_err(io::Error::other).and_then(|_| writeln!(stdout)),

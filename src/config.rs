@@ -15,6 +15,7 @@ struct FileConfig {
 #[derive(Debug)]
 pub struct Settings {
     pub rate: Duration,
+    pub system_meter: Option<String>,
     pub x_length: Duration,
     pub sample_count: usize,
     pub theme: Theme,
@@ -114,6 +115,7 @@ impl Settings {
         let mode = cli.mode(stdout_is_terminal);
         Ok(Self {
             rate,
+            system_meter: cli.system_meter.clone(),
             x_length,
             sample_count,
             theme,

@@ -43,7 +43,7 @@ pub fn tooltip(reading: Option<&Reading>, now: Instant, rate: Duration) -> Strin
                 ""
             }
         ),
-        None => "wpm — | waiting for battery flow (not system draw)".into(),
+        None => "wpm — | waiting for measured power".into(),
     }
 }
 pub struct Tray {

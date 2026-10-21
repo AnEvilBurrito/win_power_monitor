@@ -1,0 +1,29 @@
+name: Unsigned release candidate (no publishing)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: Build and verify unsigned candidate
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - name: Retain candidate for validation (GPL-3.0-only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-v0.1.0-windows-x64-unsigned
+          path: |
+            dist/wpm-v0.1.0-windows-x64.zip
+            dist/wpm-v0.1.0-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

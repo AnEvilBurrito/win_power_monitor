@@ -363,7 +363,7 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
         .join("\n");
     assert!(text.contains("27.10 W"));
     assert!(!text.contains("-27.10"));
-    for label in ["50", "25", "ETA 2h00m est", "Session", "Health —"] {
+    for label in ["50", "25", "ETA 2h00m est", "Session", "system 0.000 Wh"] {
         assert!(text.contains(label), "{label}");
     }
     assert!(!text.contains('┌'));

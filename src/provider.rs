@@ -82,6 +82,8 @@ pub fn apply_batteries(s: &mut Sample, batteries: &[Battery]) {
 pub struct Provider {
     connection: Option<wmi::WMIConnection>,
     error: Option<String>,
+    meter: Option<crate::power_meter::PowerMeter>,
+    system_meter: Option<String>,
 }
 #[cfg(windows)]
 impl Default for Provider {
@@ -98,11 +100,21 @@ impl Provider {
             Ok(connection) => Self {
                 connection: Some(connection),
                 error: None,
+                meter: None,
+                system_meter: None,
             },
             Err(e) => Self {
                 connection: None,
                 error: Some(e.to_string()),
+                meter: None,
+                system_meter: None,
             },
+        }
+    }
+    pub fn with_system_meter(selected: Option<String>) -> Self {
+        Self {
+            system_meter: selected,
+            ..Self::new()
         }
     }
     fn enumerate_batteries(connection: &wmi::WMIConnection) -> wmi::WMIResult<Vec<Battery>> {
@@ -163,7 +175,7 @@ impl Provider {
             Ok(readings) => crate::native_battery::apply(&mut s, &readings),
             Err(_) => true,
         };
-        if fallback {
+        if fallback && s.battery_present != Some(false) {
             // Do not mix native secondary values with a different WMI battery scope.
             s.watts = None;
             s.volts = None;
@@ -200,10 +212,14 @@ impl Provider {
         }
         apply_kernel_eta(&mut s, kernel_eta);
         if s.battery_present == Some(false) {
-            s.reason = Some("no_battery".into());
+            let meter = self.meter.get_or_insert_with(|| {
+                crate::power_meter::PowerMeter::new(self.system_meter.clone())
+            });
+            meter.sample(&mut s);
+        } else {
+            s.diagnostics
+                .push("pdh: not selected; battery presence not confirmed absent".into());
         }
-        s.diagnostics
-            .push("pdh: not implemented; capacity-delta fallback: not implemented".into());
         s
     }
 }
@@ -218,6 +234,9 @@ impl Default for Provider {
 #[cfg(not(windows))]
 impl Provider {
     pub fn new() -> Self {
+        Self
+    }
+    pub fn with_system_meter(_: Option<String>) -> Self {
         Self
     }
     pub fn sample(&mut self, elapsed: f64) -> Sample {

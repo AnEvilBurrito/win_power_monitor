@@ -4,6 +4,7 @@ pub mod config;
 pub mod export;
 pub mod model;
 pub mod native_battery;
+pub mod power_meter;
 pub mod provider;
 pub mod tray;
 pub mod ui;

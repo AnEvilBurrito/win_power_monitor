@@ -16,6 +16,9 @@ pub struct Cli {
     /// Seconds between samples (default 5, range 0.25–60); below 1 s may skew measurements
     #[arg(long)]
     pub rate: Option<f64>,
+    /// Exact PDH instance; asserts verified whole-system INPUT scope (never summed)
+    #[arg(long)]
+    pub system_meter: Option<String>,
     /// History span: seconds, or a duration such as 90s, 5m, 1h
     #[arg(long, value_parser = parse_span)]
     pub x_length: Option<f64>,

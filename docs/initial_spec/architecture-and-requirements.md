@@ -1,3 +1,10 @@
+> Historical design reference, not the v0.1.0 capability contract. README.md at
+> repository root is authoritative for the bounded MVP: native battery flow,
+> explicitly user-confirmed hardware PDH system-input meters on battery-absent PCs,
+> no health/cycles/time-to-full or multiple-battery aggregation. Unsigned private
+> candidate only; GPL-3.0-only selected; publication not yet authorized.
+> Proposed installer/publishing plans below are not implemented release promises.
+
 # wpm — Architecture & Requirements
 
 
@@ -52,7 +59,7 @@ win_power_monitor/
 ├── architecture-and-requirements.md      # doc 2 (this file)
 ├── install-and-publishing.md             # doc 3
 ├── CHANGELOG.md
-├── LICENSE                               # MIT OR Apache-2.0
+├── LICENSE                               # GPL-3.0-only
 ├── .gitignore
 ├── rust-toolchain.toml
 ├── Cargo.toml
@@ -145,7 +152,7 @@ Hard constraints:
 **Implemented timing and derived metrics.** The sampler stamps monotonic elapsed time
 and UTC at query completion, not at query start. Poll count, query duration and
 consecutive unchanged readings are published with samples; identical values do not
-prove staleness. Firmware refresh is independent of the requested 2 s polling cadence.
+prove staleness. Firmware refresh is independent of the default 5 s polling cadence.
 When a query overruns a deadline, schedule the next query one interval after completion
 rather than issuing catch-up bursts. Energy always uses measured completion intervals.
 `Metrics` derives discharge-only drain using least squares (two or more percentage
