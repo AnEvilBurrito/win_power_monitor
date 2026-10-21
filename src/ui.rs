@@ -88,6 +88,7 @@ pub struct View<'a> {
     pub status: &'a str,
     pub span: f64,
     pub now: f64,
+    pub program_elapsed_s: f64,
     pub stale: bool,
     pub rate: f64,
     pub state: &'a UiState,
@@ -135,10 +136,10 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(area.height >= 24)),
         Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(if area.height >= 24 { 3 } else { 2 }),
+        Constraint::Length(u16::from(area.height >= 24)),
+        Constraint::Length(if area.height >= 24 { 5 } else { 4 }),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -296,7 +297,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         stat_line("Session", &v.history.session, v.absolute),
         stat_line("Window", &v.history.window(), v.absolute),
     ];
-    if rows[6].height >= 3 {
+    if rows[6].height >= 5 {
         stats.push(Line::from(vec![
             Span::styled(" Energy  ", dim),
             Span::raw(format!(
@@ -307,6 +308,25 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             )),
         ]));
     }
+    let capacity = capacity_label(v.latest, v.stale);
+    let width = area.width.saturating_sub(1) as usize;
+    let capacity = if capacity.chars().count() > width {
+        format!(
+            "{}…",
+            capacity
+                .chars()
+                .take(width.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        capacity
+    };
+    stats.push(Line::from(format!(" {capacity}")));
+    stats.push(Line::from(format!(
+        " Program elapsed {} · stats {}",
+        elapsed_label(v.program_elapsed_s),
+        elapsed_label(v.now - v.state.origin)
+    )));
     frame.render_widget(Paragraph::new(stats), rows[6]);
     frame.render_widget(
         Paragraph::new(if area.width >= 100 {
@@ -339,15 +359,15 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                         s.diagnostics.join("\n"),
                         s.batteries
                             .iter()
-                            .enumerate()
-                            .map(|(i, b)| format!(
-                                "Battery {}: {:?}, {} W, {} V, {} A, {} Wh, {}",
-                                i + 1,
+                            .map(|b| format!(
+                                "Battery {}: {:?}, {} W, {} V, {} A, {} / {} Wh remaining/full, {}",
+                                b.index,
                                 b.state,
                                 number(b.watts),
                                 number(b.volts),
                                 number(b.amps),
                                 number(b.remaining_wh),
+                                number(b.full_charged_wh),
                                 b.reason.as_deref().unwrap_or("available")
                             ))
                             .collect::<Vec<_>>()
@@ -359,6 +379,49 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         frame.render_widget(Clear, popup);
         frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: historical statistics across battery sets since launch/reset; gaps separate epochs.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · health/cycles out of scope\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
     }
+}
+pub fn elapsed_label(seconds: f64) -> String {
+    let seconds = if seconds.is_finite() {
+        seconds.max(0.0) as u64
+    } else {
+        0
+    };
+    let clock = format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600 % 24,
+        seconds / 60 % 60,
+        seconds % 60
+    );
+    if seconds >= 86400 {
+        format!("{}d {clock}", seconds / 86400)
+    } else {
+        clock
+    }
+}
+pub fn capacity_label(sample: Option<&Sample>, stale: bool) -> String {
+    let Some(s) = sample.filter(|s| !s.is_system_power()) else {
+        return "Capacity: —".into();
+    };
+    if s.batteries.is_empty() {
+        return "Capacity: —".into();
+    }
+    s.batteries
+        .iter()
+        .map(|b| {
+            let live = !stale && !s.transition && s.available && b.available;
+            let value = |n: Option<f64>| {
+                n.filter(|n| live && n.is_finite() && *n >= 0.0)
+                    .map_or_else(|| "—".into(), |n| format!("{n:.1}"))
+            };
+            format!(
+                "bat {}: {} / {} Wh",
+                b.index,
+                value(b.remaining_wh),
+                value(b.full_charged_wh)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 fn compact_eta(s: &Sample) -> String {
     s.eta_s.map_or("—".into(), |t| {

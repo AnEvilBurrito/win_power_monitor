@@ -105,6 +105,7 @@ fn desktop_dashboard_renders_system_scope_without_battery_kpi() {
                     status: "test",
                     span: 300.0,
                     now: 0.0,
+                    program_elapsed_s: 0.0,
                     stale: false,
                     rate: 5.0,
                     state: &state,

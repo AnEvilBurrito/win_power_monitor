@@ -47,6 +47,7 @@ fn write_log(log: &mut Option<Log>, s: &Sample, status: &mut String) {
     }
 }
 pub fn run(settings: Settings) -> Result<u8, String> {
+    let start = Instant::now();
     let mut log = match &settings.log {
         Some(p) => match Log::open(p) {
             Ok(log) => Some(log),
@@ -69,7 +70,6 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     let (sender, receiver) = mpsc::sync_channel::<Sample>(64);
     let thread_stop = stop.clone();
     let rate = settings.rate;
-    let start = Instant::now();
     let wall_start = chrono::Utc::now();
     let single = matches!(settings.mode, Mode::Json | Mode::Once | Mode::SelfTest);
     let system_meter = settings.system_meter.clone();
@@ -149,7 +149,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 Mode::Once => writeln!(stdout, "{:?}: {} W measured power; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
                 Mode::SelfTest => {
                     let report = serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
-                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.", "health/cycles and WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
+                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1. v0.1.2 capacity display has synthetic coverage, not new hardware validation.", "WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
                     serde_json::to_writer_pretty(&mut stdout, &report).map_err(io::Error::other).and_then(|_| writeln!(stdout))
                 },
                 _ => serde_json::to_writer(&mut stdout, &s).map_err(io::Error::other).and_then(|_| writeln!(stdout)),
@@ -250,6 +250,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                         } else {
                             start.elapsed().as_secs_f64()
                         },
+                        program_elapsed_s: start.elapsed().as_secs_f64(),
                         stale: !paused && last_received.elapsed() > rate * 2,
                         rate: rate.as_secs_f64(),
                         state: &ui_state,

@@ -64,6 +64,7 @@ fn render(
                     status: "log off · tray off",
                     span: 300.0,
                     now: state.x[1],
+                    program_elapsed_s: 90061.0,
                     stale: false,
                     rate: 2.0,
                     state,
@@ -147,7 +148,11 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
         assert!(row(&b, 2).contains("12.40 W ↓"));
         assert!(row(&b, 2).contains("81%"));
         assert!(row(&b, 2).contains("ETA 2h14m est"));
-        for y in [1, 3, height - if height >= 24 { 6 } else { 5 }, height - 2] {
+        for y in if height >= 24 {
+            vec![1, 3, height - 8, height - 2]
+        } else {
+            vec![1, height - 2]
+        } {
             assert_eq!(row(&b, y), "─".repeat(w as usize));
         }
         assert!(row(&b, height - 1).contains("q quit"));
@@ -157,7 +162,7 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
         assert!(!all.contains("poll #"));
         assert!(all.contains(&state.clock_label(0.0)));
         assert!(all.contains(&state.clock_label(300.0)));
-        let top = (4..height - 6)
+        let top = (3..height - if height >= 24 { 8 } else { 6 })
             .find(|y| row(&b, *y).contains("20"))
             .unwrap();
         let bottom = (top + 1..height - 3)
@@ -206,6 +211,37 @@ fn trace_grows_left_to_right_and_diagnostics_are_help_only() {
 
 /// Optional persistent HTML of the actual styled TestBackend cells, for browser inspection.
 #[test]
+fn capacity_metrics_render_single_multiple_transition_and_narrow() {
+    let mut h = history();
+    let mut s = sample(0., Some(-12.4));
+    wpm_cli::native_battery::apply_members(
+        &mut s,
+        &[
+            preview_member("a", 18000, 23000),
+            preview_member("b", 30000, 45000),
+        ],
+    );
+    h.push(s.clone());
+    let state = state();
+    let b = render(80, 24, &h, &state, false, false, false);
+    assert!(row(&b, 20).contains("bat 1: 18.0 / 23.0 Wh; bat 2: 30.0 / 45.0 Wh"));
+    assert!(row(&b, 21).contains("Program elapsed 1d 01:01:01 · stats 00:05:00"));
+    let narrow = render(40, 14, &h, &state, false, false, false);
+    assert!(row(&narrow, 10).contains('…'));
+    s.transition = true;
+    h.reset();
+    h.push(s);
+    let transition = text(&render(80, 24, &h, &state, false, false, false));
+    assert!(transition.contains("bat 1: — / — Wh; bat 2: — / — Wh"));
+    let mut single = sample(0., Some(-6.2));
+    wpm_cli::native_battery::apply_members(&mut single, &[preview_member("a", 18000, 23000)]);
+    h.reset();
+    h.push(single);
+    let single = text(&render(80, 24, &h, &state, false, false, false));
+    assert!(single.contains("bat 1: 18.0 / 23.0 Wh"));
+    assert!(!single.contains("bat 2:"));
+}
+#[test]
 fn representative_render_capture() {
     let Ok(path) = std::env::var("WPM_RENDER_HTML") else {
         return;
@@ -222,11 +258,40 @@ fn representative_render_capture() {
     let mut html = String::from(
         "<!doctype html><meta charset='utf-8'><title>wpm synthetic TestBackend renders</title><style>body{background:#10151c;color:#e5e9ef}pre{font:16px/1.3 Consolas,monospace;white-space:pre}h2{font:18px sans-serif}</style>",
     );
-    for (w, height) in [(120, 32), (100, 24), (80, 14), (60, 14)] {
+    for (w, height, mode) in [
+        (120, 32, "two batteries"),
+        (100, 24, "single battery"),
+        (80, 14, "transition"),
+        (40, 14, "narrow two batteries"),
+    ] {
         html.push_str(&format!(
-            "<h2>Synthetic {w} × {height} — actual TestBackend cells</h2><pre>"
+            "<h2>Synthetic {w} × {height} — {mode} — actual production TestBackend cells</h2><pre>"
         ));
-        let b = render(w, height, &h, &state, false, false, false);
+        let mut preview = h.clone();
+        let latest = preview.samples.back_mut().unwrap();
+        let mut rows = vec![
+            preview_member("a", 18000, 23000),
+            preview_member("b", 30000, 45000),
+        ];
+        if mode == "single battery" {
+            rows.pop();
+        }
+        wpm_cli::native_battery::apply_members(latest, &rows);
+        if mode == "transition" {
+            latest.transition = true;
+            latest.available = false;
+            latest.watts = None;
+            latest.pct = None;
+            for b in &mut latest.batteries {
+                b.remaining_wh = None;
+                b.full_charged_wh = None;
+            }
+        }
+        let b = render(w, height, &preview, &state, false, false, false);
+        assert!(text(&b).contains("Program elapsed"));
+        if mode == "two batteries" {
+            assert!(text(&b).contains("bat 1: 18.0 / 23.0 Wh; bat 2: 30.0 / 45.0 Wh"));
+        }
         for y in 0..height {
             for x in 0..w {
                 let c = &b[(x, y)];
@@ -255,4 +320,50 @@ fn representative_render_capture() {
         html.push_str("</pre>");
     }
     std::fs::write(path, html).unwrap();
+}
+
+#[test]
+fn program_elapsed_is_live_independent_of_snapshot_reset_and_pause() {
+    assert_eq!(ui::elapsed_label(0.), "00:00:00");
+    assert_eq!(ui::elapsed_label(3661.9), "01:01:01");
+    assert_eq!(ui::elapsed_label(90061.), "1d 01:01:01");
+    let mut h = history();
+    h.push(sample(2., Some(-12.)));
+    let mut state = state();
+    for (w, height) in [(120, 32), (80, 24), (60, 14), (40, 14), (20, 10)] {
+        let live = render(w, height, &h, &state, false, false, false);
+        let paused = render(w, height, &h, &state, false, true, false);
+        assert_eq!(row(&live, height - 3), row(&paused, height - 3));
+        if w >= 40 {
+            assert!(row(&live, height - 3).contains("Program elapsed 1d 01:01:01"));
+        }
+    }
+    h.reset();
+    state.reset(20., 300.);
+    assert!(
+        text(&render(80, 24, &h, &state, false, false, false))
+            .contains("Program elapsed 1d 01:01:01")
+    );
+}
+
+fn preview_member(id: &str, capacity: u32, full: u32) -> wpm_cli::native_battery::Member {
+    wpm_cli::native_battery::Member {
+        id: id.into(),
+        tag: 1,
+        full_charged_capacity: full,
+        designed_capacity: full,
+        default_alert1: 0,
+        default_alert2: 0,
+        critical_bias: 0,
+        cycle_count: 0,
+        technology: 1,
+        chemistry: *b"LION",
+        reading: wpm_cli::native_battery::Reading {
+            capabilities: 0x80000000,
+            power_state: 2,
+            capacity,
+            voltage: 12000,
+            rate: -6200,
+        },
+    }
 }

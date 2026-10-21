@@ -15,6 +15,8 @@ A portable Windows terminal dashboard with a numeric tray icon, live charts, and
 ## Features
 
 - **Live dashboard.** Watts, voltage, current, battery percentage, remaining-time estimates, and a scrolling chart.
+- **Battery capacity (v0.1.2).** Each battery shows remaining / full-charge Wh, for example `bat 1: 18.0 / 23.0 Wh; bat 2: 30.0 / 45.0 Wh`. Unknown, relative or inconsistent values show a dash. Device-based numbers stay stable for this program session across reorder/detach/reattach (not physical locations); changed device IDs get new numbers. Invalid/transition collections clear capacities, and stale readings display dashes. Narrow lines truncate with an ellipsis; help/JSON retain all batteries.
+- **Elapsed time.** The final metrics row shows live monotonic **Program elapsed** (also during display freeze) and **stats** duration since launch/reset. Reset clears statistics, not program runtime; paused stats duration follows the frozen snapshot. Wh integrates valid covered intervals only, excluding gaps, and is not wall consumption.
 - **Watts in system tray.** A numeric notification-area icon keeps the current reading visible alongside the dashboard.
 - **Useful history.** Session/window statistics and separate charge/discharge energy totals.
 - **Take the data with you.** Append CSV logs, export the displayed window to CSV + JSON, or stream NDJSON.
@@ -23,7 +25,7 @@ A portable Windows terminal dashboard with a numeric tray icon, live charts, and
 
 ## Experimental multi-battery support
 
-**Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.**
+**Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1.**
 
 Native system batteries are deduplicated by Windows device instance ID and device-scoped tag. Combined watts are signed physical flow; mixed charge/discharge remains **Mixed**, including zero net flow. Multiple batteries have no combined voltage/current. Energy and capacity-weighted percentage require complete compatible absolute capacity metadata; mixed ETA is unavailable.
 
@@ -31,9 +33,9 @@ Three fresh discovery/status passes bracket each collection (status IOCTL `Timeo
 
 Topology epochs, invalid samples and long time gaps break charts/integration and reset estimators. Session/window statistics can include older sets; net battery energy is not gross per-battery throughput, and mixed energy is included only with `--all-states`. System input energy remains separate. Freeze affects only the displayed snapshot; sampling, logs and tray continue.
 
-JSON adds `topology_epoch`, `transition`, `battery_count`, collection start/end Unix seconds, and `batteries` with device IDs/tags, read availability/reasons, raw capacity/information metadata and electrical values. Review IDs before sharing diagnostics. CSV columns stay unchanged; consumers must accept the new `Mixed` state and null/unavailable transition fields. Main dashboard uses counts, not device identities. No physical location is inferred from enumeration order.
+JSON adds `topology_epoch`, `transition`, `battery_count`, collection start/end Unix seconds, and `batteries` with device IDs/tags, read availability/reasons, raw capacity/information metadata and electrical values. Review IDs before sharing diagnostics. CSV columns stay unchanged; consumers must accept the new `Mixed` state and null/unavailable transition fields. JSON per-battery fields add `index`, `remaining_wh` and `full_charged_wh` (Wh or null). Main dashboard uses session ordinals, not device IDs. No physical location is inferred from enumeration order.
 
-Version 0.1.1 checkpoints experimental multi-battery support; the existing v0.1.0 tag is unchanged. Validation packages are unpublished candidates, not replacements for released assets.
+Version 0.1.2 adds capacity and elapsed metrics; v0.1.1 checkpoints experimental multi-battery support; the existing v0.1.0 tag is unchanged. Validation packages are unpublished candidates, not replacements for released assets.
 
 ## Install
 

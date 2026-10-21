@@ -12,6 +12,8 @@ pub struct Reading {
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct BatteryDiagnostic {
+    /// Per-session device-identity ordinal; tags validate reads, not display numbering.
+    pub index: usize,
     pub id: String,
     pub tag: u32,
     pub state: State,
@@ -21,6 +23,7 @@ pub struct BatteryDiagnostic {
     pub volts: Option<f64>,
     pub amps: Option<f64>,
     pub remaining_wh: Option<f64>,
+    pub full_charged_wh: Option<f64>,
     pub full_charged_capacity: u32,
     pub designed_capacity: u32,
     pub default_alert1: u32,
@@ -58,6 +61,7 @@ pub trait Backend {
 }
 #[derive(Default)]
 pub struct Collector {
+    ordinals: std::collections::BTreeMap<String, usize>,
     membership: Option<Vec<(String, u32)>>,
     observations: Option<Vec<(String, u32)>>,
     epoch: u64,
@@ -166,6 +170,11 @@ impl Collector {
             self.invalidated = true;
             invalidate(s, &reason);
         }
+        for b in &mut s.batteries {
+            let next = self.ordinals.len() + 1;
+            b.index = *self.ordinals.entry(b.id.to_lowercase()).or_insert(next);
+        }
+        s.batteries.sort_by_key(|b| b.index);
         s.topology_epoch = self.epoch;
         s.collection_end_s = Some(backend.now_s());
     }
@@ -184,6 +193,10 @@ fn invalidate(s: &mut Sample, reason: &str) {
     s.gap = true;
     s.reason = Some(reason.into());
     s.source = "native:IOCTL_BATTERY_QUERY_STATUS".into();
+    for b in &mut s.batteries {
+        b.remaining_wh = None;
+        b.full_charged_wh = None;
+    }
 }
 fn diagnostic(m: &Member) -> BatteryDiagnostic {
     let b = m.reading;
@@ -211,7 +224,11 @@ fn diagnostic(m: &Member) -> BatteryDiagnostic {
     let absolute = b.capabilities & 0x4000_0000 == 0;
     let volts = (absolute && b.voltage != 0 && b.voltage != u32::MAX)
         .then(|| f64::from(b.voltage) / 1000.0);
+    let full_known = m.full_charged_capacity > 0 && m.full_charged_capacity != u32::MAX;
+    let remaining_known = b.capacity != u32::MAX;
+    let consistent = !(full_known && remaining_known && b.capacity > m.full_charged_capacity);
     BatteryDiagnostic {
+        index: 0,
         id: m.id.clone(),
         tag: m.tag,
         state,
@@ -220,7 +237,10 @@ fn diagnostic(m: &Member) -> BatteryDiagnostic {
         watts,
         volts,
         amps: watts.zip(volts).map(|(w, v)| w / v),
-        remaining_wh: (absolute && b.capacity != u32::MAX).then(|| f64::from(b.capacity) / 1000.0),
+        remaining_wh: (absolute && consistent && remaining_known)
+            .then(|| f64::from(b.capacity) / 1000.0),
+        full_charged_wh: (absolute && consistent && full_known)
+            .then(|| f64::from(m.full_charged_capacity) / 1000.0),
         full_charged_capacity: m.full_charged_capacity,
         designed_capacity: m.designed_capacity,
         default_alert1: m.default_alert1,
@@ -236,7 +256,15 @@ fn diagnostic(m: &Member) -> BatteryDiagnostic {
 }
 pub fn apply_members(s: &mut Sample, members: &[Member]) {
     s.battery_count = members.len();
-    s.batteries = members.iter().map(diagnostic).collect();
+    s.batteries = members
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let mut b = diagnostic(m);
+            b.index = i + 1;
+            b
+        })
+        .collect();
     if members.is_empty() {
         return;
     }
@@ -264,7 +292,13 @@ pub fn apply_members(s: &mut Sample, members: &[Member]) {
         State::Idle
     };
     s.ac_online = Some(members[0].reading.power_state & 1 != 0);
-    s.remaining_wh = s.batteries.iter().map(|b| b.remaining_wh).sum();
+    s.remaining_wh = members
+        .iter()
+        .map(|m| {
+            (m.reading.capabilities & 0x4000_0000 == 0 && m.reading.capacity != u32::MAX)
+                .then(|| f64::from(m.reading.capacity) / 1000.0)
+        })
+        .sum();
     let full: Option<f64> = members
         .iter()
         .map(|m| {

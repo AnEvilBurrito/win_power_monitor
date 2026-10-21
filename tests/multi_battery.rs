@@ -346,6 +346,7 @@ fn synthetic_multi_dashboard_small_large_and_transition() {
                         status: "",
                         span: 300.,
                         now: 0.,
+                        program_elapsed_s: 0.0,
                         stale: false,
                         rate: 5.,
                         state: &UiState::new(chrono::Utc::now(), 0., 300.),
@@ -493,4 +494,80 @@ fn injected_resource_ownership_cleanup_on_success_failure_and_recovery() {
         }
     }
     assert!(collect(&mut c, &mut Script::stable(&rows), 25.).available);
+}
+
+#[test]
+fn capacity_fields_json_units_and_stable_session_ordinals() {
+    use wpm_cli::ui::capacity_label;
+    let mut a = member("a", -1000);
+    a.reading.capacity = 18000;
+    a.full_charged_capacity = 23000;
+    let mut b = member("b", -2000);
+    b.reading.capacity = 30000;
+    b.full_charged_capacity = 45000;
+    let mut c = Collector::default();
+    let s = collect(&mut c, &mut Script::stable(&[b.clone(), a.clone()]), 0.);
+    assert_eq!(
+        capacity_label(Some(&s), false),
+        "bat 1: 18.0 / 23.0 Wh; bat 2: 30.0 / 45.0 Wh"
+    );
+    assert_eq!(s.pct, Some(4800. / 68.));
+    let json = serde_json::to_value(&s).unwrap();
+    assert_eq!(json["batteries"][0]["index"], 1);
+    assert_eq!(json["batteries"][0]["full_charged_wh"], 23.);
+    assert_eq!(json["batteries"][0]["remaining_wh"], 18.);
+    assert!(capacity_label(Some(&s), true).contains("bat 1: — / — Wh"));
+    let reordered = collect(&mut c, &mut Script::stable(&[a.clone(), b.clone()]), 1.);
+    assert_eq!(
+        capacity_label(Some(&s), false),
+        capacity_label(Some(&reordered), false)
+    );
+    let transition = collect(&mut c, &mut Script::stable(&[b.clone()]), 2.);
+    assert!(
+        transition
+            .batteries
+            .iter()
+            .all(|b| b.remaining_wh.is_none() && b.full_charged_wh.is_none())
+    );
+    let single = collect(&mut c, &mut Script::stable(&[b.clone()]), 3.);
+    assert_eq!(
+        capacity_label(Some(&single), false),
+        "bat 2: 30.0 / 45.0 Wh"
+    );
+    a.tag += 1;
+    collect(&mut c, &mut Script::stable(&[a.clone(), b.clone()]), 4.);
+    let returned = collect(&mut c, &mut Script::stable(&[a, b]), 5.);
+    assert_eq!(
+        returned
+            .batteries
+            .iter()
+            .map(|b| b.index)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    let failed = collect(&mut c, &mut Script::new(vec![Err("failed".into())]), 6.);
+    assert_eq!(capacity_label(Some(&failed), false), "Capacity: —");
+}
+#[test]
+fn capacity_invalid_unknown_relative_and_zero() {
+    for (capacity, full, relative, expected) in [
+        (0, 23000, false, "bat 1: 0.0 / 23.0 Wh"),
+        (u32::MAX, 23000, false, "bat 1: — / 23.0 Wh"),
+        (18000, 0, false, "bat 1: 18.0 / — Wh"),
+        (18000, u32::MAX, false, "bat 1: 18.0 / — Wh"),
+        (24000, 23000, false, "bat 1: — / — Wh"),
+        (18000, 23000, true, "bat 1: — / — Wh"),
+    ] {
+        let mut m = member("a", -1000);
+        m.reading.capacity = capacity;
+        m.full_charged_capacity = full;
+        if relative {
+            m.reading.capabilities |= 0x40000000;
+        }
+        let s = collect(&mut Collector::default(), &mut Script::stable(&[m]), 0.);
+        assert_eq!(wpm_cli::ui::capacity_label(Some(&s), false), expected);
+        if !relative {
+            assert_eq!(s.watts, Some(-1.));
+        }
+    }
 }

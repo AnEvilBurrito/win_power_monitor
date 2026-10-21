@@ -1,6 +1,6 @@
 # Multi-battery support — next-release requirements
 
-Status: implemented with synthetic-only validation; physically unverified. Target: Windows detachable systems such as Surface Book with batteries in the display and keyboard base.
+Status: implemented with synthetic coverage and user-confirmed operation on a Surface Book (v0.1.1, 2026-10-21). Target: Windows detachable systems such as Surface Book with batteries in the display and keyboard base.
 
 ## Scope
 
@@ -46,7 +46,7 @@ Sequential IOCTL calls are not an atomic snapshot. Software can detect inconsist
 
 ## Synthetic release acceptance
 
-For this release, validation is **synthetic only**. A live Surface Book tester is not yet available. Lack of physical validation does not block an explicitly experimental release, but must be disclosed prominently; it is not evidence of verified hardware compatibility.
+Automated validation uses synthetic tests. On 2026-10-21, a user confirmed that v0.1.1 multi-battery support works on a Surface Book. This is a real-device confirmation, not a claim that every model, firmware version, or scenario below has been individually verified.
 
 Use an injectable discovery/query backend, deterministic clocks, and scripted responses. Unit tests must not depend on the developer machine's batteries or firmware. Existing single-battery and desktop-unavailable regressions must continue to pass.
 
@@ -61,11 +61,11 @@ Use an injectable discovery/query backend, deterministic clocks, and scripted re
 | Rendering/export | Combined value, count/mixed labels, unavailable V/A, transition/stale tray handling, signed JSON/CSV, reason codes and additive metadata. Test narrow/large layouts using synthetic terminal buffers. |
 | Regressions | Single-battery discharge/charge/idle, unknown units, existing gap/stale rules, five-second default, no-battery unsupported desktop, pause behavior and reset. |
 
-Release gate: all targeted synthetic tests, existing regression suites, formatting, Clippy and release packaging pass. Release notes must say: **“Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.”** Do not state that all Surface Book models are supported or tested.
+Release gate: all targeted synthetic tests, existing regression suites, formatting, Clippy and release packaging pass. Release notes must say: **“Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1.”** Do not state that all Surface Book models are supported or tested.
 
-## Deferred live validation
+## Live validation and regression checklist
 
-When the tester becomes available, use the exported release build on a Surface Book:
+User-confirmed operation is recorded above. Use this checklist for additional regression testing; individual results have not been supplied:
 
 1. Run standalone with all reference polling scripts stopped; confirm two independently identified batteries and combined flow.
 2. Capture attached and detached operation on battery and AC, including base/display batteries at substantially different charge levels.
@@ -73,12 +73,20 @@ When the tester becomes available, use the exported release build on a Surface B
 4. Check mixed states where reproducible, unknown/transition gaps, tray behavior, suspend/resume, estimator reset and energy discontinuities.
 5. Compare serialized per-battery and combined readings and inspect diagnostics for partial totals, old tags or reused readings. Record hardware/firmware versions and acceptance results.
 
-Live results may reveal driver-specific behavior requiring a follow-up release. Keep this requirement marked physically unverified until that evidence exists.
+Record model/firmware details and scenario-specific results as they become available. User confirmation does not establish coverage of every Surface Book model or all transition edge cases.
 
 ## Implementation / release status
 
 The production Windows backend is consumed by the injectable `Collector` orchestrator. Three complete fresh passes validate membership/tags and per-device AC/direction; a failing pass is published without a same-tick retry to a numeric value. All native resources use RAII. Device retries are limited to two attempts; synchronous IOCTL driver calls have no cancellation guarantee. Sequential observations cannot detect a transition that happens and fully reverses between observations.
 
-Synthetic acceptance includes aggregation/units/capacity matrices, reordered and duplicate IDs, device-scoped tag replacement, attachment/removal at each pass, failed final discovery, charger/topology changes, invalidation/recovery, epoch-aware statistics/estimation, JSON/CSV, narrow/large terminal and tray tests. Live Surface Book, firmware behavior, suspend/resume and OS handle behavior remain physically unverified. Excessive sampling gaps conservatively reset estimation/integration after resume.
+Synthetic acceptance includes aggregation/units/capacity matrices, reordered and duplicate IDs, device-scoped tag replacement, attachment/removal at each pass, failed final discovery, charger/topology changes, invalidation/recovery, epoch-aware statistics/estimation, JSON/CSV, narrow/large terminal and tray tests. Surface Book multi-battery operation is user-confirmed; the report does not enumerate firmware, suspend/resume, or OS handle scenarios tested. Excessive sampling gaps conservatively reset estimation/integration after resume.
 
-**Experimental multi-battery aggregation; synthetic-test coverage only. Surface Book live attach/detach validation pending.**
+**Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1.**
+
+## v0.1.2 capacity and elapsed display
+
+Expose structured per-member `index`, `remaining_wh` and `full_charged_wh`, never parse diagnostics text. Display remaining / full-charge absolute Wh with one decimal, individually unknown values as dashes; relative units and inconsistent remaining > known positive full never produce plausible capacities. Invalid collections clear both structured capacity fields. Stale dashboard values show dashes. Preserve combined power, weighted percentage and voltage semantics.
+
+Allocate device-ID ordinals once per collector session (case-insensitive identity), retain across detach/reattach and tag changes; do not renumber surviving batteries. New IDs receive new ordinals; no physical-location inference or cross-run persistence. Tags retain collection invalidation semantics.
+
+Capacity is a dedicated metrics row, truncated with an explicit ellipsis at narrow widths. The final metrics row shows live monotonic Program elapsed and displayed stats duration since launch/reset; runtime continues during pause and is independent of stats reset. Stats duration freezes with the snapshot. Energy excludes invalid/gap intervals and is not wall consumption. Preserve chart height at compact supported sizes by dropping optional Energy and two separator rows. Synthetic previews use the actual production draw buffer, not fabricated hardware evidence.
