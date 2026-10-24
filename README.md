@@ -2,9 +2,10 @@
 
 # wpm · Windows Power Monitor
 
-A lightweight, portable Windows terminal dashboard with a numeric tray icon, live charts, and simple exports.
+A lightweight terminal power dashboard with live charts, battery diagnostics,
+themes, and simple exports. Includes a numeric tray icon on Windows.
 
-**Windows 10/11 · x64 · Laptops**
+**Windows 10/11 x64 · Linux x64 · Experimental macOS Apple Silicon / Intel**
 
 ![wpm terminal dashboard showing battery flow, history, and session statistics](docs/promo.png)
 
@@ -13,28 +14,72 @@ A lightweight, portable Windows terminal dashboard with a numeric tray icon, liv
 ## Features
 
 - **Live dashboard.** Watts, voltage, current, battery percentage, remaining-time estimates, and a scrolling chart.
+- **Themes.** Chart-first layout, Tokyo Night / Storm, Catppuccin variants,
+  Nord, and monochrome/high-contrast options. Battery levels at or below 20% show
+  a red accent and `low` label (label only in mono).
 - **Watts in system tray.** A numeric notification-area icon keeps the current reading visible alongside the dashboard (Windows only).
 - **Useful history.** Session/window statistics and separate charge/discharge energy totals.
+- **Battery diagnostics.** Scrollable per-battery readings, design capacity and
+	retained-capacity health where available, plus experimental idle-power,
+	below-average readings, and average-consumption runtime estimates.
 - **Take the data with you.** Append CSV logs, export the displayed window to CSV + JSON, or stream NDJSON.
 
 ## Install
 
-Requires **Windows 10 or 11 (x64)** and a supported laptop battery/driver for battery-flow readings. No Rust installation, separate runtime, service, or administrator elevation is required to run the portable executable; local security policies still apply.
+Battery-flow readings require a supported laptop battery/driver. Platform details
+and limitations are below; battery flow is not whole-system or wall consumption.
 
-**Portable builds are unsigned.** Winget distribution is planned. For now, build from source using the instructions below, or extract a supplied candidate ZIP into a writable folder after verifying its SHA-256 checksum.
+Download the archive for your OS from the
+[GitHub Releases page](https://github.com/AnEvilBurrito/win_power_monitor/releases),
+along with its matching `.sha256` file. Choose a release and read its platform
+notes; experimental builds may be marked as pre-releases. You do not need Rust
+or a repository checkout to use the packaged executable.
+
+The Linux and macOS command examples below use `0.1.3`; replace it with the
+version you downloaded. Run them from the directory containing both downloaded
+files. Verify the checksum before extracting, and stop if it does not match.
+
+### Windows
+
+Requires **Windows 10 or 11 (x64)**. No Rust installation, separate runtime,
+service, or administrator elevation is required to run the portable executable;
+local security policies still apply.
+
+1. Download the latest `wpm-v<version>-windows-x64.zip` from the
+   [Releases page](https://github.com/AnEvilBurrito/win_power_monitor/releases).
+2. Unzip it into a folder of your choice.
+3. Open PowerShell or Windows Terminal in the extracted folder and run:
+
+```powershell
+.\wpm.exe
+```
+
+Keep the extracted folder together. Optionally add that folder to your user
+`PATH` through Windows environment settings to run `wpm` from any terminal.
+**Windows builds are unsigned**; local security policies may prevent execution.
+Winget distribution is planned but is not the installation path yet.
 
 ### Linux
 
 Laptops whose battery is exposed through `/sys/class/power_supply`. Readings come
 from sysfs, so **no elevation, service, or extra runtime** is required.
+Hardware capacity reporting is developer-confirmed working. Capacity and health
+availability depend on the metadata exposed by the battery driver.
+
+Download `wpm-v0.1.3-linux-x64.tar.gz` (or the latest build) and its `.sha256` file for an x86-64
+laptop. Check the release notes for the build environment and libc requirements.
 
 ```bash
-cargo install --locked --path .            # installs ~/.cargo/bin/wpm
-# or, from a verified candidate tarball:
-./scripts/verify-package-linux.sh wpm-v<version>-linux-x64.tar.gz
-tar -xzf wpm-v<version>-linux-x64.tar.gz
-install -Dm755 wpm-v<version>-linux-x64/wpm ~/.local/bin/wpm
+sha256sum -c wpm-v0.1.3-linux-x64.tar.gz.sha256
+# Continue only if verification reports OK:
+tar -xzf wpm-v0.1.3-linux-x64.tar.gz
+install -Dm755 wpm-v0.1.3-linux-x64/wpm ~/.local/bin/wpm
+~/.local/bin/wpm --version
+~/.local/bin/wpm
 ```
+
+Add `~/.local/bin` to your shell's `PATH` if it is not already there. Retain
+the extracted documentation and license with your downloaded package.
 
 There is **no Linux system tray** (not implemented; `tray` defaults to `false`)
 and no PDH-equivalent desktop power meter, so `--system-meter` only emits a
@@ -49,25 +94,38 @@ whole-system power measurement. Intel and Apple Silicon builds are intended;
 real-hardware validation is pending. Missing telemetry stays unavailable and
 remaining/full/design energy capacity is not reported.
 
+Download `wpm-v0.1.3-macos-arm64.tar.gz` for Apple Silicon or
+`wpm-v0.1.3-macos-x64.tar.gz` for Intel, plus its matching `.sha256` file.
+For Apple Silicon (replace `arm64` with `x64` for Intel):
+
 ```bash
-cargo install --locked --path .
-wpm --once
-wpm --self-test
+shasum -a 256 -c wpm-v0.1.3-macos-arm64.tar.gz.sha256
+# Continue only if verification reports OK:
+tar -xzf wpm-v0.1.3-macos-arm64.tar.gz
+mkdir -p ~/.local/bin
+install -m755 wpm-v0.1.3-macos-arm64/wpm ~/.local/bin/wpm
+~/.local/bin/wpm --version
+~/.local/bin/wpm
 ```
 
-Building requires Rust stable and Xcode Command Line Tools. See
+Add `~/.local/bin` to your shell's `PATH` if needed, and retain the extracted
+documentation and license. Builds are **not Developer ID signed or notarized**;
+macOS security policies may prevent execution. Do not disable system protections
+to run an untrusted download.
+
+Source builds require Rust stable and Xcode Command Line Tools. See
 [macOS testing instructions](docs/dev/macos-install.md) and the
-[implementation plan](docs/dev/macos-port-plan.md). Candidates are not Developer
-ID signed or notarized; local security policies apply.
+[implementation plan](docs/dev/macos-port-plan.md) for developer validation.
 
 ## Usage
 
-Open PowerShell or Windows Terminal in the extracted folder:
+On Windows, open PowerShell or Windows Terminal in the extracted folder:
 
 ```powershell
 .\wpm.exe                                  # Dashboard + tray; samples every 5 seconds
 .\wpm.exe --rate 2 --x-length 5m             # Two-second sampling, five-minute chart
 .\wpm.exe --log .\battery.csv               # Dashboard with CSV logging
+.\wpm.exe --theme tokyo-night-storm         # Select a theme at startup
 .\wpm.exe --once                            # One readable sample
 .\wpm.exe --json                            # One JSON sample
 .\wpm.exe --ndjson --rate 2                  # JSON stream; Ctrl+C to stop
@@ -76,9 +134,13 @@ Open PowerShell or Windows Terminal in the extracted folder:
 
 Displays use magnitudes with direction shown separately. Use `--signed` for signed values; exports always use negative watts for discharge and positive for charge. `--tray=false` disables the tray. One-shot/stream modes do not open the dashboard or tray.
 
+On Linux and macOS, run `wpm` (or `./wpm` from an extracted archive) with the
+same options. The tray is Windows-only.
+
 | Key | Action |
 | --- | --- |
 | `?` | Help and diagnostics |
+| Arrows / PageUp / PageDown / Home / End | Scroll while diagnostics is open |
 | `Space` | Freeze/resume the display; sampling continues |
 | `a` / `s` | Toggle magnitude/signed display / stepped chart |
 | `r` | Reset history and session statistics |
@@ -103,8 +165,14 @@ CLI options override `WPM_RATE`, `WPM_X_LENGTH`, and `WPM_THEME`, then the file 
 Themes: `default`, `high-contrast`, `mono`, `tokyo-night`, `tokyo-night-storm`,
 `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`,
 `catppuccin-mocha`, and `nord`. Select with `--theme`, `WPM_THEME`, or the
-`theme` config value. Named palettes use true colour; the original three themes
-retain terminal colours. Generate synthetic dashboard and diagnostics previews
+`theme` config value. Themes are selected at startup; there is no in-app theme
+switcher. For example, `wpm --theme nord`, or set `theme = "nord"` in the config
+for subsequent launches. Named palettes use true colour; the original three
+themes retain terminal colours.
+
+## Diagnostics
+
+Generate synthetic dashboard and diagnostics previews
 with `cargo test --test dashboard theme_review_artifact`, then open
 `target/ui-review/themes.html` for manual review.
 

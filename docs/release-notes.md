@@ -1,49 +1,60 @@
-# Next release - planned UI/UX and diagnostics
+# Version 0.1.3 - themes, diagnostics, and platform support
 
-Implementation checkpoint (not a published release): named theme palettes,
-semantic colours, scrollable diagnostics, per-battery design/health display,
-and experimental cached analytics are now implemented. The broader dashboard
-layout refinement, estimator tuning, manual review, and native platform validation
-remain pending. Synthetic UI review: `target/ui-review/themes.html`, generated
-by `cargo test --test dashboard theme_review_artifact`.
+## Dashboard and themes
 
-The selected chart-first A layout is now implemented with neutral watts, small
-flow accents, stable trace colour, and telemetry-first diagnostics. Known battery
-levels at or below 20% use red and a `low` label; mono retains the label without
-colour. Stale/transition values do not produce low-battery warnings.
+- Refine the chart-first layout with neutral current watts, small flow accents,
+	a stable chart colour, window-first statistics, and separate electrical detail
+	on roomy terminals. Compact layouts preserve chart space.
+- Add Tokyo Night, Tokyo Night Storm, Catppuccin Latte / Frappe / Macchiato /
+	Mocha, and Nord alongside default, high-contrast, and mono. Select at startup
+	with `--theme`, `WPM_THEME`, or TOML `theme`, in that precedence order.
+- Known battery levels at or below 20% show a red accent and `low` label;
+	mono retains the label. Stale/transition values do not trigger warnings.
 
-These items are planned, not implemented release changes. Version and final
-scope are not yet assigned.
+## Diagnostics
 
-Implementation sequencing, code ownership, proposed calculation rules, and
-verification are in the [implementation plan](ui-diagnostics-implementation-plan.md).
+- Put telemetry first in the `?` overlay, with arrows, PageUp/PageDown, and
+	Home/End scrolling for long diagnostics and multi-battery details.
+- Show per-battery design capacity in Wh where supported and capacity-based
+	health (full-charge / design capacity * 100). Unknown metadata stays unavailable;
+	relative units are not labeled Wh. Valid health above 100% is not clamped.
+	Health describes retained capacity, not state of charge or a safety diagnosis.
+- Add an experimental idle-power proxy: find the unique mode of consumption
+	rounded to whole watts, then average original readings within +/-1 W of that
+	mode. Ties and estimates at or above the overall arithmetic mean are unavailable.
+- Add average-consumption ETA from remaining Wh and time-weighted discharge
+	power, separate from the existing ETA. Missing capacity stays unavailable.
+- Add idle percentage as the fraction of eligible readings strictly below their
+	arithmetic mean. Neither idle metric measures actual system inactivity.
+- Derived analytics require at least 10 valid readings and 60 seconds in the
+	latest contiguous eligible history segment. Charging/mixed battery flow is
+	excluded; confirmed system-input meters support idle proxies, not battery ETA.
+- Cache analytics and refresh at most every 30 seconds, only while diagnostics
+	is visible and history has changed. No extra hardware polls. Pause freezes
+	displayed results; reset clears them. Existing ETA and export schemas remain
+	unchanged. Real-workload estimator validation is still pending.
 
-- Improve the UI/UX layout and information hierarchy.
-- Improve text colour usage for readability and consistent visual meaning.
-- Add selectable themes, including Tokyo Night / Storm, Catppuccin variants,
-	and Nord. The final theme set and selection mechanism are to be decided.
-- Add the following monitoring metrics to diagnostics in the `?` help overlay:
+## Linux support
 
-| Planned metric | Proposed definition | Decisions still needed |
-| --- | --- | --- |
-| Estimated idle power draw | Statistical mode of power readings through temporal aggregation. | Aggregation method, observation window, and mode estimation / binning method. |
-| Estimated time remaining by average consumption | Remaining battery energy divided by average discharge power. | Averaging window, energy source when capacity is unavailable, and handling of charging, mixed flow, and non-positive consumption. |
-| Idle percentage | Percentage of valid power readings below average power. | Averaging window, sample-count versus time weighting, and treatment of signed flow. This measures below-average activity, not confirmed system idle time. |
-| Battery design capacity | Per-battery manufacturer-reported design energy in Wh where absolute units are available. | Audit platform metadata and unit validity; missing or relative-only energy stays unavailable. |
-| Battery health | Per-battery full-charge capacity / design capacity * 100, using compatible units. | Validate metadata and unavailable states; retain valid ratios above 100% without implying a safety diagnosis. |
+- Support laptop batteries through `/sys/class/power_supply`, reusing shared
+	multi-battery collection, signed flow, capacity display, and diagnostics.
+	Linux hardware capacity reporting is developer-confirmed working.
+- Provide Linux x64 tarball packaging and verification tooling. No system tray
+	or whole-system desktop power meter; no elevation or monitoring service needed
+	for readable sysfs telemetry. Distribution/libc compatibility is not universal.
 
-Before implementation, define how these estimates handle insufficient history,
-stale or missing readings, sampling gaps, resets, and battery topology changes.
-Keep the proposed average-consumption estimate distinct from the existing ETA.
+## Experimental macOS support
 
-# Unreleased - experimental macOS battery flow
-
-- Add AppleSmartBattery IORegistry plist acquisition and signed current/voltage
-	conversion, reusing the shared battery collector. No menu-bar or system power.
-- Percentage uses charge-capacity ratios; remaining/full/design Wh remain unknown.
-	Missing or conflicting readings stay unavailable. Integrated session Wh is unchanged.
-- Add portable synthetic fixtures, macOS CLI fixtures, native CI and host-architecture
-	tarball packaging. Real Intel/Apple Silicon battery validation is still pending.
+- Acquire AppleSmartBattery IORegistry plist data through `ioreg`, including
+	signed current/voltage conversion and charge-capacity percentage ratios.
+- Remaining/full/design energy capacity and capacity-based health stay
+	unavailable; average-consumption ETA consequently cannot use remaining Wh.
+	Missing or conflicting telemetry remains unavailable. Session Wh integration
+	continues to use measured battery flow.
+- Add portable and macOS CLI fixtures, native CI, and Apple Silicon / Intel
+	tarball packaging. Real-hardware validation remains pending. No menu-bar
+	integration or whole-system power measurement; builds are not Developer ID
+	signed or notarized. Windows binaries also remain unsigned.
 
 # Version 0.1.2 — capacity and elapsed metrics
 
