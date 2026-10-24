@@ -1,34 +1,177 @@
 name: Unsigned release candidate (no publishing)
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  candidate:
+  windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.package-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
-      - name: Build and verify unsigned candidate
+      - name: Record package version
+        id: package-version
         shell: pwsh
-        run: ./scripts/package.ps1
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
+          $version = ($metadata.packages | Where-Object name -EQ 'wpm-cli').version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid release version' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build and verify unsigned Windows candidate
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed' }
+          $version = (cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
+          & "./dist/wpm-v$version-windows-x64/wpm.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged executable failed' }
       - name: Package and offline-build matching Corresponding Source
         shell: pwsh
         run: ./scripts/package-source.ps1 -Ref HEAD
-      - name: Retain candidate for validation (GPL-3.0-only)
+      - name: Retain Windows candidate
         uses: actions/upload-artifact@v4
         with:
-          name: wpm-windows-x64-unsigned-with-source
+          name: wpm-candidate-windows-x64-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             dist/wpm-v*-windows-x64.zip
             dist/wpm-v*-windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain shared source
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-candidate-source-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
             dist/wpm-v*-source.zip
             dist/wpm-v*-source.zip.sha256
           if-no-files-found: error
           retention-days: 14
+
+  unix:
+    needs: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            platform: macos-x64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+      RELEASE_SHA: ${{ github.sha }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: Download shared source from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: wpm-candidate-source-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/source-input
+      - name: Verify and extract matching source
+        shell: bash
+        run: |
+          python scripts/verify-release-assets.py dist/source-input --version "$VERSION" --commit "$RELEASE_SHA" --source-only
+          python -m zipfile -e "dist/source-input/wpm-v$VERSION-source.zip" dist/source-check
+      - name: Offline-build the same source on the native target
+        working-directory: dist/source-check
+        shell: bash
+        run: cargo build --offline --locked --release --target "$TARGET"
+      - name: Package and verify Linux candidate
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ./scripts/package-linux.sh "$TARGET"
+          "./dist/wpm-v$VERSION-linux-x64/wpm" --version
+      - name: Package and verify experimental macOS candidate
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/package-macos.sh
+      - name: Retain native candidate after all checks pass
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-candidate-${{ matrix.platform }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            dist/wpm-v*-${{ matrix.platform }}.tar.gz
+            dist/wpm-v*-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release-assets:
+    needs: [windows, unix]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+      RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Collect only this attempt's candidate packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wpm-candidate-*-${{ github.sha }}-${{ github.run_attempt }}
+          merge-multiple: true
+          path: dist/release
+      - name: Test asset verifier
+        run: python -B -m unittest discover -s scripts/tests -v
+      - name: Verify exact ten-file inventory, hashes, and source identity
+        run: python scripts/verify-release-assets.py dist/release --version "$VERSION" --commit "$RELEASE_SHA"
+      - name: Retain complete verified release assets (no publishing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-release-assets-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Record release evidence
+        shell: bash
+        run: |
+          {
+            echo "## Verified release candidate"
+            echo "Commit: $RELEASE_SHA"
+            echo "Version: $VERSION"
+            echo "Run: $GITHUB_RUN_ID; attempt: $GITHUB_RUN_ATTEMPT"
+            echo "Windows x64, Linux x64, experimental macOS arm64/x64, and matching vendored source."
+            echo "Native checks and offline source builds passed. No real-hardware telemetry validation is implied."
+            echo "Download the wpm-release-assets artifact; nothing has been tagged or published."
+          } >> "$GITHUB_STEP_SUMMARY"
