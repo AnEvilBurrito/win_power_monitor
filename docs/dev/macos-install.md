@@ -72,3 +72,42 @@ SHA-256 sidecar under `dist/`. Check the sidecar from that directory with
 ID signed/notarized and may be restricted by Gatekeeper or organizational policy.
 Do not disable security protections to run them. Build from source when appropriate.
 Provide matching GPLv3 Corresponding Source with binary distribution.
+
+## User
+
+On the Mac, download the matching **Actions artifact**: `arm64` for Apple Silicon or `x64` for Intel. Unzip the downloaded artifact ZIP to get the `.tar.gz` package and its `.sha256` file.
+
+**Verify and Extract**
+Open Terminal in that folder. For Apple Silicon:
+```bash
+shasum -a 256 -c wpm-v0.1.2-macos-arm64.tar.gz.sha256
+tar -xzf wpm-v0.1.2-macos-arm64.tar.gz
+```
+The checksum command should report `OK`. For Intel, replace `arm64` with `x64`.
+
+**Run Without Installing**
+```bash
+./wpm-v0.1.2-macos-arm64/wpm --once
+./wpm-v0.1.2-macos-arm64/wpm
+```
+The second command opens the dashboard; press `q` to exit.
+
+**Install for Your User**
+No administrator access is needed:
+```bash
+mkdir -p "$HOME/.local/bin"
+install -m 755 wpm-v0.1.2-macos-arm64/wpm "$HOME/.local/bin/wpm"
+```
+
+If `~/.local/bin` is not already on your `PATH`, add it for the current session:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+To make that persistent with macOS’s default zsh shell, add that same line to `~/.zshrc`.
+
+Then run:
+```bash
+wpm --version
+wpm --self-test
+wpm
+```
