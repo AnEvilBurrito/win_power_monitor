@@ -33,6 +33,11 @@ as workflow artifacts, not GitHub Releases. Vendoring is not a license audit.
 
 ## Linux packaging (bash)
 
+For experimental macOS native packaging, run `bash scripts/package-macos.sh`
+on macOS. It builds arm64 or x64 for the host, checks checksums and Mach-O
+architecture, and creates a separate macOS tarball. It is not Developer ID
+signed/notarized. See [macOS testing](../docs/dev/macos-install.md).
+
 `package.ps1` and `package-source.ps1` stay Windows-only. On Linux:
 
 ```bash

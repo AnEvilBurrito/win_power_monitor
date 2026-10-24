@@ -162,15 +162,15 @@ impl Provider {
         s
     }
 }
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub struct Provider;
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl Default for Provider {
     fn default() -> Self {
         Self::new()
     }
 }
-#[cfg(all(not(windows), not(target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl Provider {
     pub fn new() -> Self {
         Self
@@ -182,6 +182,49 @@ impl Provider {
         let mut s = Sample::empty(elapsed);
         s.diagnostics.push("Unsupported platform".into());
         s
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+pub struct Provider {
+    backend: crate::macos::MacosBackend,
+    collector: crate::native_battery::Collector,
+    system_meter: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl Provider {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_system_meter(system_meter: Option<String>) -> Self {
+        Self {
+            system_meter,
+            ..Self::new()
+        }
+    }
+
+    pub fn sample(&mut self, elapsed: f64) -> Sample {
+        let mut sample = Sample::empty(elapsed);
+        self.collector.collect(&mut self.backend, &mut sample);
+        sample.source = crate::macos::SOURCE.into();
+        if sample.battery_count == 0 && !sample.transition {
+            sample.battery_present = Some(false);
+            sample.reason = Some("no_battery_supply".into());
+        } else if sample.battery_count == 1 && !sample.transition {
+            sample.pct = self.backend.percent_hint;
+        }
+        sample.diagnostics.push(
+            "macos: experimental IORegistry battery flow; energy capacity unavailable".into(),
+        );
+        if let Some(name) = &self.system_meter {
+            sample.diagnostics.push(format!(
+                "--system-meter {name}: unsupported on macOS; battery flow only"
+            ));
+        }
+        sample
     }
 }
 

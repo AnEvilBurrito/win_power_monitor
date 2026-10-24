@@ -1,3 +1,12 @@
+# Unreleased - experimental macOS battery flow
+
+- Add AppleSmartBattery IORegistry plist acquisition and signed current/voltage
+	conversion, reusing the shared battery collector. No menu-bar or system power.
+- Percentage uses charge-capacity ratios; remaining/full/design Wh remain unknown.
+	Missing or conflicting readings stay unavailable. Integrated session Wh is unchanged.
+- Add portable synthetic fixtures, macOS CLI fixtures, native CI and host-architecture
+	tarball packaging. Real Intel/Apple Silicon battery validation is still pending.
+
 # Version 0.1.2 — capacity and elapsed metrics
 
 - Dedicated per-battery remaining / full-charge line: `bat 1: 18.0 / 23.0 Wh; bat 2: 30.0 / 45.0 Wh`; single batteries supported. One decimal, absolute Wh only. Unknown sentinel/full zero is a dash; remaining above known positive full clears both values. Known independent values remain usable when the other is unknown.

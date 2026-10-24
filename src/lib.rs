@@ -2,6 +2,7 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod export;
+pub mod macos;
 pub mod model;
 pub mod native_battery;
 pub mod power_meter;

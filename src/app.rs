@@ -148,8 +148,12 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             let result = match settings.mode {
                 Mode::Once => writeln!(stdout, "{:?}: {} W measured power; {} V; {}%; {}{}", s.state, number(s.watts.map(|w| if settings.absolute { w.abs() } else { w })), number(s.volts), number(s.pct), s.source, s.reason.as_ref().map_or(String::new(), |r| format!(" ({r})"))),
                 Mode::SelfTest => {
+                    #[cfg(target_os = "macos")]
+                    let limitations = ["Experimental IORegistry battery flow; real MacBook validation pending", "Remaining/full/design energy capacity unavailable; percentage uses charge-capacity ratio", "No menu-bar integration or system power measurement", "battery flow is not system/wall consumption"];
+                    #[cfg(not(target_os = "macos"))]
+                    let limitations = ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1. v0.1.2 capacity display has synthetic coverage, not new hardware validation.", "WMI percentage fallback not implemented", "battery flow is not system/wall consumption"];
                     let report = serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
-                        "sample": s, "limitations": ["Desktop requires supported PDH meter and user-confirmed system input scope; no aggregation or estimates", "Experimental multi-battery aggregation; user-confirmed working on a Surface Book with v0.1.1. v0.1.2 capacity display has synthetic coverage, not new hardware validation.", "WMI percentage fallback not implemented", "battery flow is not system/wall consumption"]});
+                        "sample": s, "limitations": limitations});
                     serde_json::to_writer_pretty(&mut stdout, &report).map_err(io::Error::other).and_then(|_| writeln!(stdout))
                 },
                 _ => serde_json::to_writer(&mut stdout, &s).map_err(io::Error::other).and_then(|_| writeln!(stdout)),

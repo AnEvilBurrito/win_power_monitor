@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,3 +35,28 @@ jobs:
       - run: cargo test --locked
       - name: Package and verify x64 unsigned candidate
         run: ./scripts/package-linux.sh
+
+  macos:
+    strategy:
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: Package native unsigned candidate
+        run: bash scripts/package-macos.sh
+      - name: Retain experimental macOS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-macos-${{ matrix.runner }}-${{ github.sha }}
+          path: |
+            dist/wpm-v*-macos-*.tar.gz
+            dist/wpm-v*-macos-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14

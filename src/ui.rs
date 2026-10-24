@@ -165,6 +165,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         "wmi:root\\wmi:BatteryStatus" => "WMI",
         "k32:GetSystemPowerStatus" => "Win32",
         "native:sysfs_power_supply" => "sysfs",
+        "native:macos_ioreg" => "IORegistry",
         other => other,
     });
     let state = v.latest.map_or(State::Unknown, |s| s.state);

@@ -42,6 +42,24 @@ diagnostic. `wpm` is unrelated to the Python typing-speed tool of the same name,
 which also installs to `~/.local/bin/wpm`; check `wpm --version` after installing.
 `WPM_SYSFS_ROOT` overrides the sysfs directory (fixtures, containers, tests).
 
+### macOS (experimental)
+
+MacBook battery flow via the bundled `ioreg` tool. No menu-bar integration or
+whole-system power measurement. Intel and Apple Silicon builds are intended;
+real-hardware validation is pending. Missing telemetry stays unavailable and
+remaining/full/design energy capacity is not reported.
+
+```bash
+cargo install --locked --path .
+wpm --once
+wpm --self-test
+```
+
+Building requires Rust stable and Xcode Command Line Tools. See
+[macOS testing instructions](docs/dev/macos-install.md) and the
+[implementation plan](docs/dev/macos-port-plan.md). Candidates are not Developer
+ID signed or notarized; local security policies apply.
+
 ## Usage
 
 Open PowerShell or Windows Terminal in the extracted folder:
@@ -71,7 +89,7 @@ Displays use magnitudes with direction shown separately. Use `--signed` for sign
 
 Optional settings live in `%APPDATA%\wpm\config.toml` on Windows and
 `$XDG_CONFIG_HOME/wpm/config.toml` (falling back to `~/.config/wpm/config.toml`)
-on Linux:
+on Linux and macOS:
 
 ```toml
 rate = 5.0
