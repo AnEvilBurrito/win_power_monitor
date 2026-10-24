@@ -21,7 +21,7 @@ tar -czf "dist/$name.tar.gz" -C dist "$name"
 (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
 (cd dist && shasum -a 256 -c "$name.tar.gz.sha256")
 (cd "$package" && shasum -a 256 -c SHA256SUMS.txt)
-lipo -verify_arch "$(uname -m)" "$package/wpm"
+lipo "$package/wpm" -verify_arch "$(uname -m)"
 "$package/wpm" --version
 echo "Experimental macOS candidate (not Developer ID signed/notarized): dist/$name.tar.gz"
 echo 'Provide matching GPLv3 Corresponding Source before distribution. Nothing published.'
