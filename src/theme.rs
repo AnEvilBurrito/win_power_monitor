@@ -45,7 +45,7 @@ impl Theme {
                     border: Color::DarkGray,
                     axes: if mono { Color::White } else { Color::Cyan },
                     charge: if mono { Color::White } else { Color::Green },
-                    discharge: if mono { Color::White } else { Color::Blue },
+                    discharge: if mono { Color::White } else { Color::Yellow },
                     neutral: Color::Gray,
                     warning: if mono { Color::White } else { Color::Yellow },
                     low_battery: if mono { Color::White } else { Color::Red },

@@ -1,3 +1,13 @@
+# Version 0.1.4 - theme and diagnostics readability fixes for 0.1.3
+
+- Apply the selected theme background to the chart canvas rather than falling
+	back to black inside the plot.
+- Restore yellow discharge text for default and high-contrast terminal themes;
+	named theme palettes and monochrome behavior are unchanged.
+- Restore the battery bar with 16 cells on roomy views and six at 80 columns.
+	Hide it on narrow views or stale/unknown percentages. Low-battery red and the
+	`low` label at or below 20% are preserved.
+
 # Version 0.1.3 - themes, diagnostics, and platform support
 
 ## Dashboard and themes

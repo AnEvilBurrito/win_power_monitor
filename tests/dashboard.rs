@@ -171,6 +171,9 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
         assert!(top < bottom);
         assert!(b[(1, 2)].modifier.contains(Modifier::BOLD));
         assert_eq!(b[(1, 2)].fg, Color::Reset);
+        let flow_column = row(&b, 2).chars().position(|symbol| symbol == '↓').unwrap() as u16;
+        assert_eq!(b[(flow_column, 2)].fg, Color::Yellow);
+        assert_eq!(row(&b, 2).contains('█'), w >= 80);
         if w >= 100 && height >= 24 {
             assert!(row(&b, 3).contains("15.62 V"));
         }
@@ -451,6 +454,13 @@ fn theme_review_artifact() {
                     .unwrap();
                 let buffer = terminal.backend().buffer();
                 assert_eq!(buffer[(0, 0)].bg, theme.palette().background);
+                if !help && theme.palette().background != Color::Reset {
+                    assert_eq!(
+                        buffer[(width / 2, height / 2)].bg,
+                        theme.palette().background,
+                        "chart canvas must use the {theme:?} background"
+                    );
+                }
                 html.push_str("<section><pre>");
                 for row in 0..height {
                     for column in 0..width {
@@ -586,8 +596,34 @@ fn low_battery_threshold_and_colour_contract() {
             assert_eq!(buffer[(1, 2)].fg, theme.palette().foreground);
             if stale {
                 assert!(!row(buffer, 2).contains("20%"));
+                assert!(!row(buffer, 2).contains('█'));
+                assert!(!row(buffer, 2).contains('░'));
                 assert!(!row(buffer, 3).contains("15.62"));
             }
         }
+    }
+}
+
+#[test]
+fn estimates_stay_visible_before_verbose_diagnostics() {
+    let mut history = history();
+    let mut sample = sample(0.0, Some(-12.4));
+    wpm_cli::native_battery::apply_members(&mut sample, &[preview_member("health", 18000, 23000)]);
+    sample.diagnostics = (0..100)
+        .map(|index| format!("provider detail {index}"))
+        .collect();
+    history.push(sample);
+    let state = state();
+    for (width, height) in [(80, 24), (60, 14)] {
+        let buffer = render(width, height, &history, &state, false, false, true);
+        let content = text(&buffer);
+        assert!(content.contains("Battery health / capacity"));
+        assert!(content.contains("Health: 100.0%"));
+        if height >= 24 {
+            assert!(content.contains("Statistics / estimates"));
+            assert!(content.contains("Estimates unavailable"));
+            assert!(content.contains("ETA:"));
+        }
+        assert!(!content.contains("provider detail 99"));
     }
 }

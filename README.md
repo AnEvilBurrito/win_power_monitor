@@ -35,7 +35,7 @@ along with its matching `.sha256` file. Choose a release and read its platform
 notes; experimental builds may be marked as pre-releases. You do not need Rust
 or a repository checkout to use the packaged executable.
 
-The Linux and macOS command examples below use `0.1.3`; replace it with the
+The Linux and macOS command examples below use `0.1.4`; replace it with the
 version you downloaded. Run them from the directory containing both downloaded
 files. Verify the checksum before extracting, and stop if it does not match.
 
@@ -66,14 +66,14 @@ from sysfs, so **no elevation, service, or extra runtime** is required.
 Hardware capacity reporting is developer-confirmed working. Capacity and health
 availability depend on the metadata exposed by the battery driver.
 
-Download `wpm-v0.1.3-linux-x64.tar.gz` (or the latest build) and its `.sha256` file for an x86-64
+Download `wpm-v0.1.4-linux-x64.tar.gz` (or the latest build) and its `.sha256` file for an x86-64
 laptop. Check the release notes for the build environment and libc requirements.
 
 ```bash
-sha256sum -c wpm-v0.1.3-linux-x64.tar.gz.sha256
+sha256sum -c wpm-v0.1.4-linux-x64.tar.gz.sha256
 # Continue only if verification reports OK:
-tar -xzf wpm-v0.1.3-linux-x64.tar.gz
-install -Dm755 wpm-v0.1.3-linux-x64/wpm ~/.local/bin/wpm
+tar -xzf wpm-v0.1.4-linux-x64.tar.gz
+install -Dm755 wpm-v0.1.4-linux-x64/wpm ~/.local/bin/wpm
 ~/.local/bin/wpm --version
 ~/.local/bin/wpm
 ```
@@ -94,16 +94,16 @@ whole-system power measurement. Intel and Apple Silicon builds are intended;
 real-hardware validation is pending. Missing telemetry stays unavailable and
 remaining/full/design energy capacity is not reported.
 
-Download `wpm-v0.1.3-macos-arm64.tar.gz` for Apple Silicon or
-`wpm-v0.1.3-macos-x64.tar.gz` for Intel, plus its matching `.sha256` file.
+Download `wpm-v0.1.4-macos-arm64.tar.gz` for Apple Silicon or
+`wpm-v0.1.4-macos-x64.tar.gz` for Intel, plus its matching `.sha256` file.
 For Apple Silicon (replace `arm64` with `x64` for Intel):
 
 ```bash
-shasum -a 256 -c wpm-v0.1.3-macos-arm64.tar.gz.sha256
+shasum -a 256 -c wpm-v0.1.4-macos-arm64.tar.gz.sha256
 # Continue only if verification reports OK:
-tar -xzf wpm-v0.1.3-macos-arm64.tar.gz
+tar -xzf wpm-v0.1.4-macos-arm64.tar.gz
 mkdir -p ~/.local/bin
-install -m755 wpm-v0.1.3-macos-arm64/wpm ~/.local/bin/wpm
+install -m755 wpm-v0.1.4-macos-arm64/wpm ~/.local/bin/wpm
 ~/.local/bin/wpm --version
 ~/.local/bin/wpm
 ```

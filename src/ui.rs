@@ -230,11 +230,19 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         } else {
             compact_eta(s)
         };
+        let gauge = s
+            .pct
+            .filter(|pct| !unavailable && (0.0..=100.0).contains(pct) && area.width >= 80)
+            .map_or_else(String::new, |pct| {
+                let cells = if roomy { 16 } else { 6 };
+                let filled = (pct / 100.0 * cells as f64).round() as usize;
+                format!(" {}{}", "█".repeat(filled), "░".repeat(cells - filled))
+            });
         let details = if s.is_system_power() {
             "   user-confirmed meter scope".into()
         } else {
             format!(
-                "   Battery {pct}%{}",
+                "   Battery{gauge} {pct}%{}",
                 if s.pct
                     .is_some_and(|pct| !unavailable && (0.0..=20.0).contains(&pct))
                 {
@@ -351,6 +359,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
     );
     frame.render_widget(
         Chart::new(datasets)
+            .style(palette.style())
             .x_axis(
                 Axis::default().style(axes).bounds(v.state.x).labels(
                     v.state
@@ -434,16 +443,13 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                         s.batteries
                             .iter()
                             .map(|b| format!(
-                                "Battery {}: {:?}, {} W, {} V, {} A, {} / {} Wh remaining/full, {}\n{}",
+                                "Battery {}: {:?}, {} W, {} V, {} A, {}",
                                 b.index,
                                 b.state,
                                 number(b.watts),
                                 number(b.volts),
                                 number(b.amps),
-                                number(b.remaining_wh),
-                                number(b.full_charged_wh),
                                 b.reason.as_deref().unwrap_or("available"),
-                                battery_health_label(b, v.stale || s.transition)
                             ))
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -453,11 +459,43 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         );
         frame.render_widget(Clear, popup);
         frame.render_widget(Block::default().style(palette.style()), popup);
+        let health = v
+            .latest
+            .filter(|sample| !sample.is_system_power())
+            .filter(|sample| !sample.batteries.is_empty())
+            .map_or_else(
+                || "Battery health: unavailable".into(),
+                |sample| {
+                    sample
+                        .batteries
+                        .iter()
+                        .map(|battery| {
+                            format!(
+                                "Battery {}\n{}\nFull: {} Wh · Remaining: {} Wh",
+                                battery.index,
+                                battery_health_label(battery, v.stale || sample.transition),
+                                number(
+                                    battery
+                                        .full_charged_wh
+                                        .filter(|_| !v.stale && !sample.transition)
+                                ),
+                                number(
+                                    battery
+                                        .remaining_wh
+                                        .filter(|_| !v.stale && !sample.transition)
+                                ),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                },
+            );
         let content = format!(
-            "Measurement / batteries\n{diagnostic}\nDerived diagnostics\n{analytics}\nStatistics\nDisplay: {}\nSession: history since launch/reset; gaps separate epochs.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · cycles out of scope\n{status}\nControls\nq quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close · arrows/PgUp/PgDn scroll · Home/End",
-            if v.absolute { "magnitude" } else { "signed" },
+            "Battery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nSession: since launch/reset; gaps separate epochs.\n{status}\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export · l log · a signed/magnitude · s step\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
             v.latest.map_or("—".into(), remaining_label),
             number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),
+            if v.absolute { "magnitude" } else { "signed" },
+            v.span,
             analytics = analytics_label(v),
             status = v.status,
         );
@@ -503,17 +541,17 @@ fn analytics_label(view: &View<'_>) -> String {
         return "Estimates unavailable / pending refresh".into();
     };
     format!(
-        "{} readings / {:.0}s covered · age {:.0}s{}\nEstimated idle power proxy: {} W\nIdle proxy: below-average readings {}%\nAverage-consumption ETA: {}",
-        summary.count,
-        summary.covered_s,
-        (view.now - summary.observed_s).max(0.0),
-        if view.paused { " (frozen)" } else { "" },
+        "Idle power proxy   {} W\nBelow-mean readings {}%\nAverage ETA        {}\n{} readings / {:.0}s · age {:.0}s{}",
         number(summary.idle_w),
         number(summary.below_average_pct),
         summary.eta_s.map_or_else(
             || "unavailable (capacity/history required)".into(),
             elapsed_label
-        )
+        ),
+        summary.count,
+        summary.covered_s,
+        (view.now - summary.observed_s).max(0.0),
+        if view.paused { " (frozen)" } else { "" },
     )
 }
 
