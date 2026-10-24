@@ -55,7 +55,7 @@ fn defaults_and_tray_switches() {
     assert!(resolve(&["--abs"], &[], true).unwrap().absolute);
     assert!(!resolve(&["--signed"], &[], true).unwrap().absolute);
     assert!(Cli::try_parse_from(["wpm", "--abs", "--signed"]).is_err());
-    assert!(settings.tray);
+    assert_eq!(settings.tray, cfg!(windows));
     assert!(resolve(&["--tray"], &[], true).expect("tray").tray);
     assert!(!resolve(&["--tray=false"], &[], true).expect("no tray").tray);
 }
@@ -228,6 +228,44 @@ fn appdata_config_and_empty_log() {
     .expect("APPDATA config");
     std::fs::remove_dir_all(&root).expect("clean fixture directory");
     assert_eq!(settings.rate, Duration::from_secs(6));
+}
+
+#[cfg(not(windows))]
+#[test]
+fn xdg_config_home_and_home_precede_appdata() {
+    let cli = Cli::try_parse_from(["wpm"]).expect("CLI");
+    let root = std::env::current_dir()
+        .expect("project directory")
+        .join(format!("wpm-xdg-{}", std::process::id()));
+    let xdg = root.join("xdg");
+    let home = root.join("home");
+    std::fs::create_dir_all(xdg.join("wpm")).expect("xdg directory");
+    std::fs::create_dir_all(home.join(".config").join("wpm")).expect("home directory");
+    std::fs::write(xdg.join("wpm").join("config.toml"), "rate = 9\n").expect("xdg config");
+    std::fs::write(
+        home.join(".config").join("wpm").join("config.toml"),
+        "rate = 11\n",
+    )
+    .expect("home config");
+    let xdg_os = xdg.clone().into_os_string();
+    let home_os = home.clone().into_os_string();
+    let settings = Settings::resolve(&cli, true, |key| {
+        (key == "XDG_CONFIG_HOME").then(|| xdg_os.clone())
+    })
+    .expect("xdg config");
+    assert_eq!(settings.rate, Duration::from_secs(9));
+    let settings = Settings::resolve(&cli, true, |key| (key == "HOME").then(|| home_os.clone()))
+        .expect("home config");
+    assert_eq!(settings.rate, Duration::from_secs(11));
+    // HOME must not shadow an explicit WPM_CONFIG.
+    let settings = Settings::resolve(&cli, true, |key| match key {
+        "HOME" => Some(home_os.clone()),
+        "WPM_CONFIG" => Some(xdg.join("wpm").join("config.toml").into_os_string()),
+        _ => None,
+    })
+    .expect("explicit config");
+    assert_eq!(settings.rate, Duration::from_secs(9));
+    std::fs::remove_dir_all(&root).expect("clean fixture directory");
 }
 
 #[test]

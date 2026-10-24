@@ -162,15 +162,15 @@ impl Provider {
         s
     }
 }
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 pub struct Provider;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 impl Default for Provider {
     fn default() -> Self {
         Self::new()
     }
 }
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "linux")))]
 impl Provider {
     pub fn new() -> Self {
         Self
@@ -180,7 +180,72 @@ impl Provider {
     }
     pub fn sample(&mut self, elapsed: f64) -> Sample {
         let mut s = Sample::empty(elapsed);
-        s.diagnostics.push("Windows required".into());
+        s.diagnostics.push("Unsupported platform".into());
+        s
+    }
+}
+
+/// Linux provider: `/sys/class/power_supply` battery flow.
+///
+/// Deliberately thinner than the Windows provider: Windows merges a kernel
+/// status call, a native IOCTL collection, an optional WMI fallback and an
+/// optional PDH meter. Linux has one authoritative source, so the shared
+/// `Collector` and `apply_members` do all validation and aggregation and this
+/// type only repairs what the shared code assumes about the platform.
+#[cfg(target_os = "linux")]
+pub struct Provider {
+    backend: crate::sysfs::SysfsBackend,
+    collector: crate::native_battery::Collector,
+    system_meter: Option<String>,
+}
+#[cfg(target_os = "linux")]
+impl Default for Provider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+#[cfg(target_os = "linux")]
+impl Provider {
+    pub fn new() -> Self {
+        let backend = std::env::var_os("WPM_SYSFS_ROOT").map_or_else(
+            crate::sysfs::SysfsBackend::default,
+            crate::sysfs::SysfsBackend::with_root,
+        );
+        Self {
+            backend,
+            collector: Default::default(),
+            system_meter: None,
+        }
+    }
+    pub fn with_system_meter(selected: Option<String>) -> Self {
+        Self {
+            system_meter: selected,
+            ..Self::new()
+        }
+    }
+    pub fn sample(&mut self, elapsed: f64) -> Sample {
+        let mut s = Sample::empty(elapsed);
+        self.collector.collect(&mut self.backend, &mut s);
+        // `invalidate` and `apply_members` hardcode the Windows source label.
+        s.source = crate::sysfs::SOURCE.into();
+        // Three snapshots per tick repeat per-supply notes; keep one of each.
+        s.diagnostics.dedup();
+        if let Some(online) = self.backend.ac_online() {
+            s.ac_online = Some(online);
+        }
+        if s.battery_count == 0 && !s.transition {
+            s.battery_present = Some(false);
+            s.reason = Some("no_battery_supply".into());
+        } else if s.pct.is_none() && !s.transition && s.battery_count == 1 {
+            // Energy-derived percentage wins; this covers packs that only
+            // expose `capacity` (%). Never averaged across batteries.
+            s.pct = self.backend.percent_hint();
+        }
+        if let Some(name) = &self.system_meter {
+            s.diagnostics.push(format!(
+                "--system-meter {name}: no PDH Power Meter analogue on Linux; battery flow only"
+            ));
+        }
         s
     }
 }

@@ -6,5 +6,6 @@ pub mod model;
 pub mod native_battery;
 pub mod power_meter;
 pub mod provider;
+pub mod sysfs;
 pub mod tray;
 pub mod ui;

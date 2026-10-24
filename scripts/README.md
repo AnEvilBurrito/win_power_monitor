@@ -30,3 +30,19 @@ restored. No Python is required. Nothing is tagged, uploaded or published.
 
 The manual candidate workflow retains both binary/source ZIPs and their checksums
 as workflow artifacts, not GitHub Releases. Vendoring is not a license audit.
+
+## Linux packaging (bash)
+
+`package.ps1` and `package-source.ps1` stay Windows-only. On Linux:
+
+```bash
+./scripts/package-linux.sh          # dist/wpm-v<version>-linux-x64.tar.gz + .sha256
+./scripts/verify-package-linux.sh dist/wpm-v<version>-linux-x64.tar.gz
+```
+
+The tarball contains `wpm`, `README.md`, `LICENSE`, `docs/promo.png` and
+`SHA256SUMS.txt`, with sorted members and fixed timestamps so rebuilds from the
+same tree produce an identical SHA-256. The verifier checks the tarball checksum,
+the member allowlist, the inner binary checksum, and that `wpm` is an x86-64 ELF.
+No packaging script writes outside `dist/`, so the Windows and Linux candidates
+do not collide. Nothing is tagged, uploaded or published.

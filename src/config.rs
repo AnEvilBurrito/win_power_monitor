@@ -43,9 +43,7 @@ impl Settings {
             .config
             .clone()
             .or_else(|| env("WPM_CONFIG").map(PathBuf::from));
-        let path = explicit_path
-            .clone()
-            .or_else(|| env("APPDATA").map(|p| PathBuf::from(p).join("wpm").join("config.toml")));
+        let path = explicit_path.clone().or_else(|| default_config_path(&env));
         let mut warnings = Vec::new();
         let file = match path {
             Some(path) => match fs::read_to_string(&path) {
@@ -119,7 +117,7 @@ impl Settings {
             x_length,
             sample_count,
             theme,
-            tray: mode == Mode::Dashboard && cli.tray.or(file.tray).unwrap_or(true),
+            tray: mode == Mode::Dashboard && cli.tray.or(file.tray).unwrap_or(cfg!(windows)),
             all_states: cli.all_states || file.all_states.unwrap_or(false),
             log: cli
                 .log
@@ -132,4 +130,26 @@ impl Settings {
             warnings,
         })
     }
+}
+
+/// Per-platform config location. Windows keeps `%APPDATA%\wpm\config.toml`
+/// exactly as before; other platforms follow the XDG base directory spec and
+/// still accept `%APPDATA%` as a last resort so existing fixtures keep working.
+#[cfg(windows)]
+fn default_config_path(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    env("APPDATA").map(|p| PathBuf::from(p).join("wpm").join("config.toml"))
+}
+
+#[cfg(not(windows))]
+fn default_config_path(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let dir = env("XDG_CONFIG_HOME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env("HOME")
+                .filter(|h| !h.is_empty())
+                .map(|h| PathBuf::from(h).join(".config"))
+        });
+    dir.map(|d| d.join("wpm").join("config.toml"))
+        .or_else(|| env("APPDATA").map(|p| PathBuf::from(p).join("wpm").join("config.toml")))
 }

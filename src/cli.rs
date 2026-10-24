@@ -10,8 +10,13 @@ pub enum Theme {
     Mono,
 }
 
+#[cfg(windows)]
+const ABOUT: &str = "Windows power monitor";
+#[cfg(not(windows))]
+const ABOUT: &str = "Battery power monitor";
+
 #[derive(Debug, Parser)]
-#[command(name = "wpm", version, about = "Windows power monitor", group(ArgGroup::new("mode").args(["json", "ndjson", "once", "self_test"]).multiple(false)))]
+#[command(name = "wpm", version, about = ABOUT, group(ArgGroup::new("mode").args(["json", "ndjson", "once", "self_test"]).multiple(false)))]
 pub struct Cli {
     /// Seconds between samples (default 5, range 0.25–60); below 1 s may skew measurements
     #[arg(long)]
@@ -48,7 +53,7 @@ pub struct Cli {
     pub theme: Option<Theme>,
     #[arg(long)]
     pub config: Option<PathBuf>,
-    /// Show a tray icon alongside the dashboard (default true; --tray=false disables)
+    /// Show a notification-area icon alongside the dashboard (default true on Windows)
     #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true, action = clap::ArgAction::Set)]
     pub tray: Option<bool>,
 }

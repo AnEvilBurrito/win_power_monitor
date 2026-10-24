@@ -13,7 +13,7 @@ A lightweight, portable Windows terminal dashboard with a numeric tray icon, liv
 ## Features
 
 - **Live dashboard.** Watts, voltage, current, battery percentage, remaining-time estimates, and a scrolling chart.
-- **Watts in system tray.** A numeric notification-area icon keeps the current reading visible alongside the dashboard.
+- **Watts in system tray.** A numeric notification-area icon keeps the current reading visible alongside the dashboard (Windows only).
 - **Useful history.** Session/window statistics and separate charge/discharge energy totals.
 - **Take the data with you.** Append CSV logs, export the displayed window to CSV + JSON, or stream NDJSON.
 
@@ -22,6 +22,25 @@ A lightweight, portable Windows terminal dashboard with a numeric tray icon, liv
 Requires **Windows 10 or 11 (x64)** and a supported laptop battery/driver for battery-flow readings. No Rust installation, separate runtime, service, or administrator elevation is required to run the portable executable; local security policies still apply.
 
 **Portable builds are unsigned.** Winget distribution is planned. For now, build from source using the instructions below, or extract a supplied candidate ZIP into a writable folder after verifying its SHA-256 checksum.
+
+### Linux
+
+Laptops whose battery is exposed through `/sys/class/power_supply`. Readings come
+from sysfs, so **no elevation, service, or extra runtime** is required.
+
+```bash
+cargo install --locked --path .            # installs ~/.cargo/bin/wpm
+# or, from a verified candidate tarball:
+./scripts/verify-package-linux.sh wpm-v<version>-linux-x64.tar.gz
+tar -xzf wpm-v<version>-linux-x64.tar.gz
+install -Dm755 wpm-v<version>-linux-x64/wpm ~/.local/bin/wpm
+```
+
+There is **no Linux system tray** (not implemented; `tray` defaults to `false`)
+and no PDH-equivalent desktop power meter, so `--system-meter` only emits a
+diagnostic. `wpm` is unrelated to the Python typing-speed tool of the same name,
+which also installs to `~/.local/bin/wpm`; check `wpm --version` after installing.
+`WPM_SYSFS_ROOT` overrides the sysfs directory (fixtures, containers, tests).
 
 ## Usage
 
@@ -50,7 +69,9 @@ Displays use magnitudes with direction shown separately. Use `--signed` for sign
 
 ## Configuration
 
-Optional settings live in `%APPDATA%\wpm\config.toml`:
+Optional settings live in `%APPDATA%\wpm\config.toml` on Windows and
+`$XDG_CONFIG_HOME/wpm/config.toml` (falling back to `~/.config/wpm/config.toml`)
+on Linux:
 
 ```toml
 rate = 5.0
@@ -73,6 +94,14 @@ cargo build --locked --release --target x86_64-pc-windows-msvc
 ```
 
 Desktop watts require specialized hardware and explicit verified meter selection; most desktops cannot report total system power.
+
+On Linux only `rustup` is needed (no MSVC or Windows SDK; Windows crates are
+behind `cfg(windows)` targets):
+
+```bash
+cargo build --locked --release
+./target/release/wpm --once
+```
 
 ## License
 

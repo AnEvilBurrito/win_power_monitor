@@ -164,6 +164,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         "wmi:root\\wmi:BatteryStatus:fallback_unverified" => "WMI fallback (unverified)",
         "wmi:root\\wmi:BatteryStatus" => "WMI",
         "k32:GetSystemPowerStatus" => "Win32",
+        "native:sysfs_power_supply" => "sysfs",
         other => other,
     });
     let state = v.latest.map_or(State::Unknown, |s| s.state);
