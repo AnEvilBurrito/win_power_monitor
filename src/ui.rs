@@ -1,12 +1,13 @@
 use crate::{
     cli::Theme,
     model::{History, Sample, State, Stats, number},
+    theme::Palette,
 };
 use chrono::{DateTime, Local, Utc};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{Axis, Block, Borders, Chart, Clear, Dataset, GraphType, Paragraph, Wrap},
@@ -14,6 +15,10 @@ use ratatui::{
 
 /// Clock anchor never follows later wall-clock adjustments. Viewports use monotonic seconds.
 pub struct UiState {
+    pub analytics: crate::analytics::Analytics,
+    pub frozen_analytics: Option<crate::analytics::Summary>,
+    pub help_scroll: u16,
+    pub help_max: std::cell::Cell<u16>,
     pub x: [f64; 2],
     pub y: [f64; 2],
     signed_y: [f64; 2],
@@ -24,6 +29,10 @@ pub struct UiState {
 impl UiState {
     pub fn new(wall: DateTime<Utc>, origin: f64, span: f64) -> Self {
         Self {
+            analytics: crate::analytics::Analytics::default(),
+            frozen_analytics: None,
+            help_scroll: 0,
+            help_max: std::cell::Cell::new(0),
             x: [origin, origin + span],
             y: [0.0, 10.0],
             signed_y: [0.0, 0.0],
@@ -33,6 +42,9 @@ impl UiState {
         }
     }
     pub fn reset(&mut self, origin: f64, span: f64) {
+        self.analytics.reset();
+        self.frozen_analytics = None;
+        self.help_scroll = 0;
         self.origin = origin;
         self.x = [origin, origin + span];
         self.signed_y = [0.0, 0.0];
@@ -93,7 +105,7 @@ pub struct View<'a> {
     pub rate: f64,
     pub state: &'a UiState,
 }
-fn stat_line(label: &str, s: &Stats, absolute: bool) -> Line<'static> {
+fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'static> {
     let (avg, min, max) = if absolute {
         (
             (s.count > 0).then(|| s.magnitude_sum / s.count as f64),
@@ -106,7 +118,7 @@ fn stat_line(label: &str, s: &Stats, absolute: bool) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!(" {label:<7} "),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette.secondary),
         ),
         Span::raw(format!(
             "avg {}  min {}  max {} W",
@@ -118,24 +130,24 @@ fn stat_line(label: &str, s: &Stats, absolute: bool) -> Line<'static> {
 }
 pub fn draw(frame: &mut Frame, v: &View<'_>) {
     let area = frame.area();
-    let mono = matches!(v.theme, Theme::Mono);
-    let axes = Style::default().fg(if mono { Color::White } else { Color::Cyan });
-    let dim = Style::default().fg(if matches!(v.theme, Theme::HighContrast) {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    });
-    let color = if mono {
-        Color::White
-    } else if v.latest.is_some_and(|s| s.state == State::Charging) {
-        Color::Green
-    } else {
-        Color::Yellow
-    };
+    let palette = v.theme.palette();
+    frame.render_widget(Block::default().style(palette.style()), area);
+    if area.width < 30 || area.height < 8 {
+        frame.render_widget(
+            Paragraph::new("wpm\nTerminal too small\n? diagnostics / q quit")
+                .style(palette.style()),
+            area,
+        );
+        return;
+    }
+    let axes = Style::default().fg(palette.secondary);
+    let dim = Style::default().fg(palette.secondary);
+    let roomy = area.width >= 100 && area.height >= 24;
+    let unavailable = v.stale || v.latest.is_some_and(|sample| sample.transition);
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(if roomy { 2 } else { 1 }),
         Constraint::Length(u16::from(area.height >= 24)),
         Constraint::Min(0),
         Constraint::Length(u16::from(area.height >= 24)),
@@ -146,7 +158,8 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
     .split(area);
     for i in [1, 3, 5, 7] {
         frame.render_widget(
-            Paragraph::new("─".repeat(area.width as usize)).style(dim),
+            Paragraph::new("─".repeat(area.width as usize))
+                .style(Style::default().fg(palette.border)),
             rows[i],
         );
     }
@@ -168,22 +181,20 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         "native:macos_ioreg" => "IORegistry",
         other => other,
     });
-    let state = v.latest.map_or(State::Unknown, |s| s.state);
-    let left = if area.width >= 100 {
-        format!(
-            " wpm · {state:?} · {source} · {:.1}s · {:.0}s · {} pts · {live}",
-            v.rate,
-            v.span,
-            v.history.samples.len()
-        )
-    } else {
-        format!(
-            " wpm · {live} · {source} · {:.1}s · {:.0}s · {} pts",
-            v.rate,
-            v.span,
-            v.history.samples.len()
-        )
-    };
+    let left = Line::from(vec![
+        Span::styled(" wpm   ", dim),
+        Span::styled(
+            live,
+            Style::default()
+                .fg(if v.paused || unavailable {
+                    palette.warning
+                } else {
+                    palette.foreground
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("   {source}"), dim),
+    ]);
     let top = Layout::horizontal([Constraint::Min(0), Constraint::Length(8)]).split(rows[0]);
     frame.render_widget(Paragraph::new(left), top[0]);
     frame.render_widget(Paragraph::new("? help").style(dim).right_aligned(), top[1]);
@@ -192,8 +203,8 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             "system input"
         } else {
             match s.state {
-                State::Discharging => "↓",
-                State::Charging => "↑",
+                State::Discharging => "↓ discharge",
+                State::Charging => "↑ charging",
                 State::Idle => "Idle",
                 State::Mixed => "Mixed",
                 State::Unknown => "Unknown",
@@ -201,49 +212,95 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         };
         let value = |n: Option<f64>| {
             number(
-                n.filter(|n| n.is_finite())
+                n.filter(|n| !unavailable && n.is_finite())
                     .map(|n| if v.absolute { n.abs() } else { n }),
             )
         };
-        let watts = if v.stale {
+        let watts = if unavailable {
             "—".into()
         } else {
             value(s.watts)
         };
-        let electrical = if area.width >= 80 {
-            format!("   {} V   {} A", number(s.volts), value(s.amps))
-        } else {
-            String::new()
-        };
-        let cells = if area.width >= 100 { 16 } else { 6 };
-        let gauge = s.pct.filter(|p| p.is_finite()).map_or_else(
-            || "unavailable".into(),
-            |p| {
-                let filled = (p.clamp(0.0, 100.0) / 100.0 * cells as f64).round() as usize;
-                format!("{}{}", "█".repeat(filled), "░".repeat(cells - filled))
-            },
-        );
-        let pct = s.pct.map_or("—".into(), |p| format!("{p:.0}"));
-        let eta = if v.stale {
+        let pct = s
+            .pct
+            .filter(|pct| !unavailable && pct.is_finite())
+            .map_or("—".into(), |p| format!("{p:.0}"));
+        let eta = if unavailable {
             "—".into()
         } else {
             compact_eta(s)
         };
-        if s.is_system_power() {
-            format!(" {watts} W system input · user-confirmed meter scope")
+        let details = if s.is_system_power() {
+            "   user-confirmed meter scope".into()
         } else {
             format!(
-                " {watts} W {direction} · {} batteries{electrical}   {gauge} {pct}%  ETA {eta}",
-                s.battery_count
+                "   Battery {pct}%{}",
+                if s.pct
+                    .is_some_and(|pct| !unavailable && (0.0..=20.0).contains(&pct))
+                {
+                    " low"
+                } else {
+                    ""
+                }
             )
+        };
+        let low_battery = !s.is_system_power()
+            && !unavailable
+            && s.pct.is_some_and(|pct| (0.0..=20.0).contains(&pct));
+        let mut lines = vec![Line::from(vec![
+            Span::styled(
+                format!(" {watts} W"),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {}{direction}", if s.is_system_power() { "" } else { " " }),
+                Style::default().fg(if unavailable {
+                    palette.neutral
+                } else {
+                    palette.state(s.state)
+                }),
+            ),
+            Span::styled(
+                details,
+                Style::default().fg(if low_battery {
+                    palette.low_battery
+                } else {
+                    palette.foreground
+                }),
+            ),
+            Span::raw(if s.is_system_power() {
+                String::new()
+            } else {
+                format!(
+                    "   ETA {eta}{}",
+                    if roomy {
+                        String::new()
+                    } else {
+                        format!(" · {} batteries", s.battery_count)
+                    }
+                )
+            }),
+        ])];
+        if roomy {
+            lines.push(Line::styled(
+                if s.is_system_power() {
+                    " Measured system input power".into()
+                } else {
+                    format!(
+                        " {} batteries                         {} V   {} A",
+                        s.battery_count,
+                        number(s.volts.filter(|_| !unavailable)),
+                        value(s.amps)
+                    )
+                },
+                dim,
+            ));
         }
+        lines
     } else {
-        " Waiting for measured power".into()
+        vec![Line::from(" Waiting for measured power")]
     };
-    frame.render_widget(
-        Paragraph::new(kpi).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
-        rows[2],
-    );
+    frame.render_widget(Paragraph::new(kpi), rows[2]);
     let mut segments: Vec<Vec<(f64, f64)>> = vec![vec![]];
     for s in &v.history.samples {
         let watts = s.watts.filter(|w| w.is_finite());
@@ -273,10 +330,25 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             .data(data)
             .marker(symbols::Marker::Braille)
             .graph_type(GraphType::Line)
-            .style(Style::default().fg(color))
+            .style(Style::default().fg(palette.axes))
     }));
     let bounds = v.state.y;
     let ticks = [bounds[0], (bounds[0] + bounds[1]) / 2.0, bounds[1]];
+    let chart_rows = Layout::vertical([
+        Constraint::Length(u16::from(area.height >= 24)),
+        Constraint::Min(0),
+    ])
+    .split(rows[4]);
+    frame.render_widget(
+        Paragraph::new(format!(
+            " Power / {} W{}   window {:.0}s",
+            if v.absolute { "magnitude" } else { "signed" },
+            if unavailable { " / historical" } else { "" },
+            v.span
+        ))
+        .style(dim),
+        chart_rows[0],
+    );
     frame.render_widget(
         Chart::new(datasets)
             .x_axis(
@@ -293,11 +365,11 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                     .bounds(bounds)
                     .labels(ticks.map(|t| Line::styled(format!("{t:.0}"), axes))),
             ),
-        rows[4],
+        chart_rows[1],
     );
     let mut stats = vec![
-        stat_line("Session", &v.history.session, v.absolute),
-        stat_line("Window", &v.history.window(), v.absolute),
+        stat_line("Window", &v.history.window(), v.absolute, palette),
+        stat_line("Session", &v.history.session, v.absolute, palette),
     ];
     if rows[6].height >= 5 {
         stats.push(Line::from(vec![
@@ -310,7 +382,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             )),
         ]));
     }
-    let capacity = capacity_label(v.latest, v.stale);
+    let capacity = capacity_label(v.latest, unavailable);
     let width = area.width.saturating_sub(1) as usize;
     let capacity = if capacity.chars().count() > width {
         format!(
@@ -362,7 +434,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                         s.batteries
                             .iter()
                             .map(|b| format!(
-                                "Battery {}: {:?}, {} W, {} V, {} A, {} / {} Wh remaining/full, {}",
+                                "Battery {}: {:?}, {} W, {} V, {} A, {} / {} Wh remaining/full, {}\n{}",
                                 b.index,
                                 b.state,
                                 number(b.watts),
@@ -370,7 +442,8 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                                 number(b.amps),
                                 number(b.remaining_wh),
                                 number(b.full_charged_wh),
-                                b.reason.as_deref().unwrap_or("available")
+                                b.reason.as_deref().unwrap_or("available"),
+                                battery_health_label(b, v.stale || s.transition)
                             ))
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -379,8 +452,103 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             },
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new(format!("q quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close help · {}\nSession: historical statistics across battery sets since launch/reset; gaps separate epochs.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · health/cycles out of scope\n{}\n{}", if v.absolute {"magnitude"} else {"signed"}, v.latest.map_or("—".into(), remaining_label),number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),v.status,diagnostic)).wrap(Wrap {trim:true}).block(Block::default().title(" Help / diagnostics ").borders(Borders::ALL)),popup);
+        frame.render_widget(Block::default().style(palette.style()), popup);
+        let content = format!(
+            "Measurement / batteries\n{diagnostic}\nDerived diagnostics\n{analytics}\nStatistics\nDisplay: {}\nSession: history since launch/reset; gaps separate epochs.\nWindow: latest --x-length period (5 minutes by default).\nScope: system input and discharging battery readings; other battery states --all-states.\nETA: {}\nDrain: {} %/hr estimate · cycles out of scope\n{status}\nControls\nq quit · space freeze display (sampling/log/tray continue)\nr reset · e signed export · l log · a signed/magnitude · s step\n? close · arrows/PgUp/PgDn scroll · Home/End",
+            if v.absolute { "magnitude" } else { "signed" },
+            v.latest.map_or("—".into(), remaining_label),
+            number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),
+            analytics = analytics_label(v),
+            status = v.status,
+        );
+        let paragraph = Paragraph::new(content).wrap(Wrap { trim: true });
+        let inner_width = popup.width.saturating_sub(2);
+        let inner_height = popup.height.saturating_sub(2);
+        let maximum = paragraph
+            .line_count(inner_width)
+            .saturating_sub(inner_height as usize)
+            .min(u16::MAX as usize) as u16;
+        let scroll = v.state.help_scroll.min(maximum);
+        v.state.help_max.set(maximum);
+        frame.render_widget(
+            paragraph.scroll((scroll, 0)).block(
+                Block::default()
+                    .title(format!(
+                        " Help / diagnostics {}/{} ",
+                        scroll + 1,
+                        maximum + 1
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.border)),
+            ),
+            popup,
+        );
     }
+}
+
+fn analytics_label(view: &View<'_>) -> String {
+    let summary = if view.paused {
+        view.state.frozen_analytics.as_ref()
+    } else {
+        view.state.analytics.summary.as_ref()
+    };
+    let Some(summary) = summary.filter(|summary| {
+        !view.stale
+            && view
+                .history
+                .samples
+                .front()
+                .is_some_and(|first| summary.observed_s >= first.elapsed_s)
+    }) else {
+        return "Estimates unavailable / pending refresh".into();
+    };
+    format!(
+        "{} readings / {:.0}s covered · age {:.0}s{}\nEstimated idle power proxy: {} W\nIdle proxy: below-average readings {}%\nAverage-consumption ETA: {}",
+        summary.count,
+        summary.covered_s,
+        (view.now - summary.observed_s).max(0.0),
+        if view.paused { " (frozen)" } else { "" },
+        number(summary.idle_w),
+        number(summary.below_average_pct),
+        summary.eta_s.map_or_else(
+            || "unavailable (capacity/history required)".into(),
+            elapsed_label
+        )
+    )
+}
+
+pub fn battery_health_label(
+    battery: &crate::native_battery::BatteryDiagnostic,
+    stale: bool,
+) -> String {
+    let valid =
+        !stale && (battery.available || battery.reason.as_deref() == Some("native_relative_units"));
+    let design = battery.designed_capacity;
+    let full = battery.full_charged_capacity;
+    let design_known = valid && design > 0 && design != u32::MAX;
+    let full_known = valid && full > 0 && full != u32::MAX;
+    let relative = battery.capabilities & 0x40000000 != 0;
+    let capacity = if design_known && !relative {
+        format!("{:.1} Wh", design as f64 / 1000.0)
+    } else if design_known {
+        "unavailable (relative units)".into()
+    } else {
+        "unavailable".into()
+    };
+    let health = if design_known && full_known {
+        format!(
+            "{:.1}% retained capacity{}",
+            full as f64 / design as f64 * 100.0,
+            if full > design {
+                " (reported above design)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        "unavailable".into()
+    };
+    format!("Design: {capacity} · Health: {health}")
 }
 pub fn elapsed_label(seconds: f64) -> String {
     let seconds = if seconds.is_finite() {

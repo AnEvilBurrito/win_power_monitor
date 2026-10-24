@@ -207,6 +207,9 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             }
             write_log(&mut log, &s, &mut status);
             current = Some(history.push(s));
+            if let Some(sample) = &current {
+                ui_state.analytics.observe(sample);
+            }
         }
         let tray_status = tray
             .as_ref()
@@ -223,6 +226,19 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 "discharge stats"
             }
         );
+        if !paused {
+            ui_state
+                .analytics
+                .refresh(&history, start.elapsed().as_secs_f64(), help);
+        } else if help
+            && ui_state.frozen_analytics.is_none()
+            && let Some((frozen_history, _)) = &frozen_view
+            && ui_state
+                .analytics
+                .refresh(frozen_history, start.elapsed().as_secs_f64(), true)
+        {
+            ui_state.frozen_analytics = ui_state.analytics.summary.clone();
+        }
         if !paused {
             ui_state.advance(
                 start.elapsed().as_secs_f64(),
@@ -262,6 +278,9 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 )
             })
             .map_err(|e| e.to_string())?;
+        if help {
+            ui_state.help_scroll = ui_state.help_scroll.min(ui_state.help_max.get());
+        }
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())?
             && let Event::Key(key) = event::read().map_err(|e| e.to_string())?
         {
@@ -277,6 +296,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     paused = !paused;
                     frozen = start.elapsed().as_secs_f64();
                     frozen_view = if paused {
+                        ui_state.frozen_analytics = ui_state.analytics.summary.clone();
                         Some((history.clone(), current.clone()))
                     } else {
                         None
@@ -298,6 +318,26 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     paused = false;
                 }
                 KeyCode::Char('?') => help = !help,
+                KeyCode::Up if help => {
+                    ui_state.help_scroll = ui_state.help_scroll.saturating_sub(1)
+                }
+                KeyCode::Down if help => {
+                    ui_state.help_scroll = ui_state
+                        .help_scroll
+                        .saturating_add(1)
+                        .min(ui_state.help_max.get())
+                }
+                KeyCode::PageUp if help => {
+                    ui_state.help_scroll = ui_state.help_scroll.saturating_sub(10)
+                }
+                KeyCode::PageDown if help => {
+                    ui_state.help_scroll = ui_state
+                        .help_scroll
+                        .saturating_add(10)
+                        .min(ui_state.help_max.get())
+                }
+                KeyCode::Home if help => ui_state.help_scroll = 0,
+                KeyCode::End if help => ui_state.help_scroll = ui_state.help_max.get(),
                 KeyCode::Char('a') => absolute = !absolute,
                 KeyCode::Char('s') => step = !step,
                 KeyCode::Char('e') => {

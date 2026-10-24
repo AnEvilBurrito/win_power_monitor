@@ -8,6 +8,13 @@ pub enum Theme {
     Default,
     HighContrast,
     Mono,
+    TokyoNight,
+    TokyoNightStorm,
+    CatppuccinLatte,
+    CatppuccinFrappe,
+    CatppuccinMacchiato,
+    CatppuccinMocha,
+    Nord,
 }
 
 #[cfg(windows)]

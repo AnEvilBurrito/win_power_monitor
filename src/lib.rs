@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod app;
 pub mod cli;
 pub mod config;
@@ -8,5 +9,6 @@ pub mod native_battery;
 pub mod power_meter;
 pub mod provider;
 pub mod sysfs;
+pub mod theme;
 pub mod tray;
 pub mod ui;

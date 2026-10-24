@@ -98,12 +98,8 @@ impl Settings {
         let theme = if let Some(theme) = cli.theme {
             theme
         } else if let Some(value) = text_env("WPM_THEME")? {
-            match value.as_str() {
-                "default" => Theme::Default,
-                "high-contrast" => Theme::HighContrast,
-                "mono" => Theme::Mono,
-                _ => return Err("WPM_THEME must be default, high-contrast, or mono".into()),
-            }
+            <Theme as clap::ValueEnum>::from_str(&value, false)
+                .map_err(|error| format!("WPM_THEME: {error}"))?
         } else {
             file.theme.unwrap_or_default()
         };

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wpm preliminary dashboard mockups</title>
+<style>
+:root { color-scheme: light; font-family: Georgia, serif; color: #242424; background: #f2f4f5; }
+* { box-sizing: border-box; }
+body { margin: 24px auto; padding: 0 20px 40px; max-width: 1120px; }
+h1 { font-size: 28px; } h2 { font-size: 21px; margin-top: 32px; }
+p { max-width: 84ch; line-height: 1.55; }
+.terminal { overflow-x: auto; background: #1a1b26; color: #c0caf5; margin: 16px 0; }
+pre { font-family: Consolas, 'Courier New', monospace; font-size: 14px; line-height: 1.4; margin: 0; padding: 16px; width: max-content; min-width: 100%; }
+.muted { color: #a9b1d6; } .trace { color: #7dcfff; } .flow { color: #7aa2f7; }
+.charge { color: #9ece6a; } .attention { color: #e0af68; } .rule { color: #737ea3; }
+.light { background: #eff1f5; color: #4c4f69; }
+.light .muted { color: #5c5f77; } .light .trace { color: #007784; }
+.light .flow { color: #1e66f5; } .light .rule { color: #70758a; }
+.mono { color: #eee; background: #171717; }
+.mono span { color: inherit; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px 24px; font: 14px Consolas, monospace; padding: 12px 16px; }
+.legend span { white-space: nowrap; }
+a { color: #205fb4; }
+</style>
+<h1>wpm / preliminary dashboard review</h1>
+<p>Illustrative terminal mockups, not application screenshots. Synthetic values and abbreviated charts show hierarchy only. The proposed communication contract keeps values neutral, flow accents small, the trace stable, and attention colour reserved for conditions requiring notice.</p>
+<p><a href="dashboard-redesign-mockups.md">Design rationale, colour roles, states, and review criteria</a></p>
+<h2>A / chart-first bands (recommended)</h2>
+<div class="terminal"><pre><span class="muted"> wpm   </span><b>LIVE</b><span class="muted">   Battery IOCTL                                       ? diagnostics</span>
+
+ <b>12.40 W</b>  <span class="flow">v DISCHARGING</span>                  Battery <b>81%</b>   ETA ~2h 14m
+ <span class="muted">2 batteries                            15.62 V       0.79 A</span>
+<span class="rule"> -----------------------------------------------------------------------------</span>
+ <span class="muted">Power / magnitude W                                      window 5m</span>
+ <span class="muted">30 |</span>                      <span class="trace">/\</span>
+    <span class="muted">|</span>                <span class="trace">_____/  \</span>
+ <span class="muted">15 |</span>       <span class="trace">/\____/\_/         \___</span>
+    <span class="muted">|</span>    <span class="trace">__/                        \____</span>
+  <span class="muted">0 |</span><span class="trace">____                              \__________________________</span>
+    <span class="muted">12:09:38                                               12:14:38</span>
+<span class="rule"> -----------------------------------------------------------------------------</span>
+ <span class="muted">             avg        min        max W</span>
+ <span class="muted">Window </span>     12.20       6.00      19.80
+ <span class="muted">Session</span>     11.80       4.20      23.10     <span class="muted">out</span> 0.420 / <span class="muted">in</span> 0.000 Wh
+ <span class="muted">bat 1:</span> 18.0 / 23.0 Wh; <span class="muted">bat 2:</span> 30.0 / 45.0 Wh
+ <span class="muted">Program</span> 00:35:20    <span class="muted">stats</span> 00:35:20
+ <span class="muted">q quit   space pause   r reset   e export                       ? diagnostics</span></pre></div>
+<h2>B / dense instrument strip</h2>
+<p>Closer to the current layout. Saves a row but asks the eye to scan more information horizontally.</p>
+<div class="terminal"><pre><span class="muted"> wpm  </span><b>LIVE</b><span class="muted">  Battery IOCTL                                         ? diagnostics</span>
+ <b>12.40 W</b> <span class="flow">v discharge</span> | 81% | ETA ~2h 14m | 15.62 V | 0.79 A | 2 bat
+<span class="rule"> -----------------------------------------------------------------------------</span>
+ <span class="muted">Power / magnitude W                                      window 5m</span>
+ <span class="muted">30 |</span>                      <span class="trace">/\</span>
+ <span class="muted">15 |</span>       <span class="trace">/\____/\______/  \___</span>
+  <span class="muted">0 |</span><span class="trace">_______                    \_______________________________</span>
+    <span class="muted">12:09:38                                               12:14:38</span>
+<span class="rule"> -----------------------------------------------------------------------------</span>
+ <span class="muted">Window  avg</span> 12.20  <span class="muted">min</span> 6.00  <span class="muted">max</span> 19.80 W
+ <span class="muted">Session avg</span> 11.80  <span class="muted">min</span> 4.20  <span class="muted">max</span> 23.10 W    <span class="muted">out</span> 0.420 / <span class="muted">in</span> 0.000 Wh
+ <span class="muted">bat 1:</span> 18.0 / 23.0 Wh; <span class="muted">bat 2:</span> 30.0 / 45.0 Wh
+ <span class="muted">Program</span> 00:35:20    <span class="muted">stats</span> 00:35:20
+ <span class="muted">q quit   space pause   r reset   e export                       ? diagnostics</span></pre></div>
+<h2>A / compact, light palette</h2>
+<div class="terminal light"><pre><span class="muted"> wpm </span><b>LIVE</b><span class="muted"> Battery IOCTL                ? diagnostics</span>
+ <b>12.40 W</b> <span class="flow">v discharge</span>   81%   ETA ~2h 14m
+ <span class="muted">Power / magnitude W                     window 5m</span>
+ <span class="muted">30 |</span>                  <span class="trace">/\</span>
+ <span class="muted">15 |</span>     <span class="trace">/\__________/  \___</span>
+  <span class="muted">0 |</span><span class="trace">_____                   \_______________</span>
+    <span class="muted">12:09:38                             12:14:38</span>
+ <span class="muted">Window   avg</span> 12.20 <span class="muted">min</span> 6.00 <span class="muted">max</span> 19.80 W
+ <span class="muted">Session  avg</span> 11.80 <span class="muted">min</span> 4.20 <span class="muted">max</span> 23.10 W
+ <span class="muted">bat 1:</span> 18.0 / 23.0 Wh; <span class="muted">bat 2:</span> 30.0 / 45.0 Wh
+ <span class="muted">Program</span> 00:35:20   <span class="muted">stats</span> 00:35:20
+ <span class="muted">q quit   space pause                ? diagnostics</span></pre></div>
+<h2>State signals / same hierarchy, no colour-only meaning</h2>
+<div class="terminal"><pre> <b>18.70 W</b>  <span class="charge">^ CHARGING</span>       Battery 74%   ETA --
+ <b> 2.30 W</b>    MIXED            Battery 79%   ETA --
+ <b>12.40 W</b>    DISCHARGING      <span class="attention">PAUSED / frozen</span>
+ <b>   -- W</b>    UNKNOWN          <span class="attention">NO RECENT POLL</span>
+ <span class="muted">Historical chart retained; current battery values unavailable.</span>
+ <b>42.60 W</b>    SYSTEM INPUT     user-confirmed meter scope</pre>
+<div class="legend"><span>Values: neutral</span><span class="trace">Trace: stable accent</span><span class="flow">Flow: small accent</span><span class="attention">Attention: status only</span></div></div>
+<h2>Diagnostics / telemetry before instructions</h2>
+<div class="terminal"><pre><span class="rule"> + Diagnostics ---------------------------------------------------- 1/28 +</span>
+ <span class="rule">|</span> <b>Measurement</b>                                                          <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Source</span>       Battery IOCTL      <span class="muted">Scope</span>     combined net battery flow   <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Poll</span>         #420               <span class="muted">Age</span>       1.2 s                       <span class="rule">|</span>
+ <span class="rule">|</span> <b>Battery 1</b>                                                            <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Remaining</span>    18.0 Wh            <span class="muted">Full</span>      23.0 Wh                     <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Design</span>       26.0 Wh            <span class="muted">Health</span>    88.5% retained capacity     <span class="rule">|</span>
+ <span class="rule">|</span> <b>Battery 2</b>                                                            <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Remaining</span>    30.0 Wh            <span class="muted">Full</span>      45.0 Wh                     <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Design</span>       50.0 Wh            <span class="muted">Health</span>    90.0% retained capacity     <span class="rule">|</span>
+ <span class="rule">|</span> <b>Derived estimates</b>   <span class="muted">observed 12:14:30 / age 8s / coverage 300s</span>       <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Idle proxy</span>   ~8.5 W             <span class="muted">Below mean readings</span>  62%              <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Average ETA</span>  ~3h 56m            <span class="muted">Scope</span>     contiguous discharge        <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">Proxy estimates are not measured system-idle detection.</span>               <span class="rule">|</span>
+ <span class="rule">|</span> <span class="muted">arrows/PgUp/PgDn scroll   Home/End   ? close   q quit</span>                   <span class="rule">|</span>
+<span class="rule"> + --------------------------------------------------------------------- +</span></pre></div>
+<h2>Mono / meaning survives without accents</h2>
+<div class="terminal mono"><pre> wpm  <b>LIVE</b>  Battery IOCTL
+ <b>12.40 W</b>  v DISCHARGING      81%    ETA ~2h 14m
+ <b>   -- W</b>    UNKNOWN          <b>NO RECENT POLL</b>
+ Historical chart retained; current values unavailable.</pre></div>
+<p>Review decision: choose A or B before runtime layout changes. A is recommended for clearer grouping; B prioritizes density. The production review artifact remains separate from these preliminary sketches.</p>
+</html>

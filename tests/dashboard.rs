@@ -145,11 +145,11 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
         assert!(row(&b, 0).contains("Battery IOCTL"));
         assert!(row(&b, 0).contains("? help"));
         assert!(row(&b, 0).contains("LIVE"));
-        assert!(row(&b, 2).contains("12.40 W ↓"));
+        assert!(row(&b, 2).contains("12.40 W  ↓ discharge"));
         assert!(row(&b, 2).contains("81%"));
         assert!(row(&b, 2).contains("ETA 2h14m est"));
         for y in if height >= 24 {
-            vec![1, 3, height - 8, height - 2]
+            vec![1, if w >= 100 { 4 } else { 3 }, height - 8, height - 2]
         } else {
             vec![1, height - 2]
         } {
@@ -170,9 +170,9 @@ fn five_bands_axes_styles_and_freeze_at_supported_sizes() {
             .unwrap();
         assert!(top < bottom);
         assert!(b[(1, 2)].modifier.contains(Modifier::BOLD));
-        assert_eq!(b[(1, 2)].fg, Color::Yellow);
-        if w >= 80 {
-            assert!(row(&b, 2).contains("15.62 V"));
+        assert_eq!(b[(1, 2)].fg, Color::Reset);
+        if w >= 100 && height >= 24 {
+            assert!(row(&b, 3).contains("15.62 V"));
         }
         let frozen = render(w, height, &h, &state, false, true, false);
         for y in 4..height - if height >= 24 { 6 } else { 5 } {
@@ -196,7 +196,7 @@ fn trace_grows_left_to_right_and_diagnostics_are_help_only() {
     let rightmost = |b: &Buffer| {
         (4..26)
             .flat_map(|y| (0..120).map(move |x| (x, y)))
-            .filter(|&(x, y)| b[(x, y)].fg == Color::Yellow && b[(x, y)].symbol() != " ")
+            .filter(|&(x, y)| b[(x, y)].fg == Color::Cyan && b[(x, y)].symbol() != " ")
             .map(|(x, _)| x)
             .max()
             .unwrap()
@@ -365,5 +365,229 @@ fn preview_member(id: &str, capacity: u32, full: u32) -> wpm_cli::native_battery
             voltage: 12000,
             rate: -6200,
         },
+    }
+}
+
+#[test]
+fn theme_review_artifact() {
+    use clap::ValueEnum;
+    let mut history = history();
+    for index in 0..=60 {
+        history.push(sample(index as f64 * 5.0, Some(-8.0 - (index % 7) as f64)));
+    }
+    let latest = history.samples.back_mut().unwrap();
+    wpm_cli::native_battery::apply_members(latest, &[preview_member("review", 18000, 23000)]);
+    let mut state = state();
+    state.advance(300.0, 300.0, &history, true);
+    state.analytics.refresh(&history, 300.0, true);
+    let mut html = String::from(
+        "<!doctype html><html lang='en'><meta charset='utf-8'><title>wpm theme review</title><style>body{background:#ddd;color:#222;font:14px monospace;margin:24px}pre{line-height:1.2;padding:12px;width:max-content}section{overflow:auto}</style><h1>wpm theme review</h1><p>Synthetic telemetry rendered by the production dashboard. Named palettes require a true-colour terminal. Reset colours use a representative dark terminal.</p>",
+    );
+    for theme in Theme::value_variants() {
+        let name = theme.to_possible_value().unwrap();
+        html.push_str(&format!("<h2>{}</h2>", name.get_name()));
+        for (width, height, help, scroll) in [
+            (100, 26, false, 0),
+            (80, 24, false, 0),
+            (60, 14, false, 0),
+            (80, 24, true, 0),
+            (80, 24, true, u16::MAX),
+            (40, 14, true, u16::MAX),
+        ] {
+            state.help_scroll = scroll;
+            for scenario in [
+                "live",
+                "charging",
+                "mixed",
+                "paused",
+                "stale",
+                "low battery",
+            ] {
+                if help && scenario != "live" {
+                    continue;
+                }
+                let mut preview = history.clone();
+                if let Some(sample) = preview.samples.back_mut() {
+                    if scenario == "low battery" {
+                        sample.pct = Some(20.0);
+                    }
+                    if scenario == "charging" {
+                        sample.state = State::Charging;
+                        sample.watts = Some(18.7);
+                        sample.eta_s = None;
+                    }
+                    if scenario == "mixed" {
+                        sample.state = State::Mixed;
+                        sample.eta_s = None;
+                    }
+                }
+                html.push_str(&format!(
+                    "<h3>{width}x{height} / {scenario} / {} </h3>",
+                    if help { "diagnostics" } else { "dashboard" }
+                ));
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        ui::draw(
+                            frame,
+                            &View {
+                                history: &preview,
+                                latest: preview.samples.back(),
+                                paused: scenario == "paused",
+                                help,
+                                absolute: true,
+                                step: false,
+                                theme: *theme,
+                                status: "synthetic review fixture",
+                                span: 300.0,
+                                now: 300.0,
+                                program_elapsed_s: 300.0,
+                                stale: scenario == "stale",
+                                rate: 5.0,
+                                state: &state,
+                            },
+                        )
+                    })
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(0, 0)].bg, theme.palette().background);
+                html.push_str("<section><pre>");
+                for row in 0..height {
+                    for column in 0..width {
+                        let cell = &buffer[(column, row)];
+                        let foreground = review_colour(cell.fg, false);
+                        let background = review_colour(cell.bg, true);
+                        let symbol = cell
+                            .symbol()
+                            .replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('>', "&gt;");
+                        let weight = if cell.modifier.contains(Modifier::BOLD) {
+                            "bold"
+                        } else {
+                            "normal"
+                        };
+                        html.push_str(&format!("<span style='color:{foreground};background:{background};font-weight:{weight}'>{symbol}</span>"));
+                    }
+                    html.push('\n');
+                }
+                html.push_str("</pre></section>");
+            }
+        }
+    }
+    html.push_str("</html>");
+    let directory = std::path::Path::new("target/ui-review");
+    std::fs::create_dir_all(directory).unwrap();
+    std::fs::write(directory.join("themes.html"), html).unwrap();
+}
+
+fn review_colour(colour: Color, background: bool) -> String {
+    match colour {
+        Color::Rgb(red, green, blue) => format!("#{red:02x}{green:02x}{blue:02x}"),
+        Color::Black => "#000000".into(),
+        Color::White => "#ffffff".into(),
+        Color::Gray => "#c0c0c0".into(),
+        Color::DarkGray => "#808080".into(),
+        Color::Green => "#00c000".into(),
+        Color::Red => "#ff6677".into(),
+        Color::Blue => "#709bff".into(),
+        Color::Yellow => "#e0e000".into(),
+        Color::Cyan => "#00c0c0".into(),
+        _ if background => "#16181d".into(),
+        _ => "#eeeeee".into(),
+    }
+}
+
+#[test]
+fn battery_health_units_and_diagnostics_scroll() {
+    let mut sample = sample(60.0, Some(-10.0));
+    let mut member = preview_member("health", 18000, 40000);
+    member.designed_capacity = 50000;
+    wpm_cli::native_battery::apply_members(&mut sample, &[member]);
+    let battery = &mut sample.batteries[0];
+    assert!(ui::battery_health_label(battery, false).contains("50.0 Wh"));
+    assert!(ui::battery_health_label(battery, false).contains("80.0%"));
+    battery.capabilities |= 0x40000000;
+    assert!(ui::battery_health_label(battery, false).contains("relative units"));
+    assert!(ui::battery_health_label(battery, false).contains("80.0%"));
+    battery.full_charged_capacity = 55000;
+    assert!(ui::battery_health_label(battery, false).contains("110.0%"));
+    assert!(!ui::battery_health_label(battery, true).contains("110.0%"));
+    battery.designed_capacity = u32::MAX;
+    assert!(ui::battery_health_label(battery, false).contains("Health: unavailable"));
+    let mut history = history();
+    history.push(sample);
+    let mut state = state();
+    state.help_scroll = 0;
+    let buffer = render(80, 24, &history, &state, false, false, true);
+    assert!(text(&buffer).contains("Health:"));
+    assert!(state.help_max.get() > 0);
+}
+
+#[test]
+fn low_battery_threshold_and_colour_contract() {
+    use clap::ValueEnum;
+    let state = state();
+    for theme in Theme::value_variants() {
+        for (percentage, stale, charging, expected_low) in [
+            (Some(20.0), false, false, true),
+            (Some(0.0), false, false, true),
+            (Some(20.01), false, false, false),
+            (Some(20.0), false, true, true),
+            (Some(20.0), true, false, false),
+            (None, false, false, false),
+            (Some(f64::NAN), false, false, false),
+            (Some(-1.0), false, false, false),
+        ] {
+            let mut history = history();
+            let mut sample = sample(0.0, Some(-12.4));
+            sample.pct = percentage;
+            if charging {
+                sample.state = State::Charging;
+                sample.watts = Some(12.4);
+                sample.eta_s = None;
+            }
+            history.push(sample);
+            let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
+            terminal
+                .draw(|frame| {
+                    ui::draw(
+                        frame,
+                        &View {
+                            history: &history,
+                            latest: history.samples.back(),
+                            paused: false,
+                            help: false,
+                            absolute: true,
+                            step: false,
+                            theme: *theme,
+                            status: "test",
+                            span: 300.0,
+                            now: 0.0,
+                            program_elapsed_s: 0.0,
+                            stale,
+                            rate: 5.0,
+                            state: &state,
+                        },
+                    )
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(row(buffer, 2).contains("% low"), expected_low);
+            let column = row(buffer, 2).find("Battery").unwrap() as u16;
+            assert_eq!(
+                buffer[(column, 2)].fg,
+                if expected_low {
+                    theme.palette().low_battery
+                } else {
+                    theme.palette().foreground
+                }
+            );
+            assert_eq!(buffer[(1, 2)].fg, theme.palette().foreground);
+            if stale {
+                assert!(!row(buffer, 2).contains("20%"));
+                assert!(!row(buffer, 3).contains("15.62"));
+            }
+        }
     }
 }

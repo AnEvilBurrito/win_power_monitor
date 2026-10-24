@@ -45,6 +45,38 @@ impl Drop for ConfigFile {
 }
 
 #[test]
+fn all_theme_names_resolve_consistently() {
+    use clap::ValueEnum;
+    for theme in Theme::value_variants() {
+        let name = theme.to_possible_value().unwrap();
+        let name = name.get_name();
+        assert_eq!(
+            resolve(&["--theme", name], &[], true).unwrap().theme,
+            *theme
+        );
+        assert_eq!(
+            resolve(&[], &[("WPM_THEME", name)], true).unwrap().theme,
+            *theme
+        );
+        let file = ConfigFile::new(&format!("theme = '{name}'\n"));
+        assert_eq!(
+            resolve(&["--config", file.path()], &[], true)
+                .unwrap()
+                .theme,
+            *theme
+        );
+        assert_eq!(
+            resolve(&["--theme", name], &[("WPM_THEME", "invalid")], true)
+                .unwrap()
+                .theme,
+            *theme
+        );
+    }
+    assert!(resolve(&[], &[("WPM_THEME", "invalid")], true).is_err());
+    assert!(Cli::try_parse_from(["wpm", "--theme", "invalid"]).is_err());
+}
+
+#[test]
 fn defaults_and_tray_switches() {
     let settings = resolve(&[], &[], true).expect("defaults");
     assert_eq!(settings.rate, Duration::from_secs(5));
