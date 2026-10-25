@@ -605,6 +605,140 @@ fn low_battery_threshold_and_colour_contract() {
 }
 
 #[test]
+fn switching_themes_repaints_live_paused_and_diagnostics_without_changing_history() {
+    use clap::ValueEnum;
+    let mut history = history();
+    history.push(sample(0.0, Some(-12.4)));
+    history.push(sample(2.0, Some(-10.0)));
+    let original = serde_json::to_string(&history.samples).unwrap();
+    let energy = history.session.discharge_wh;
+    let mut state = state();
+    state.advance(2.0, 300.0, &history, true);
+    let bounds = (state.x, state.y);
+
+    for (width, height) in [(120, 32), (80, 24), (60, 14)] {
+        for (paused, help) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let mut theme = Theme::Nord;
+            for _ in 0..=Theme::value_variants().len() {
+                // Reuse the terminal to catch RGB-to-terminal-colour repaint regressions.
+                state.help_scroll = if help { u16::MAX } else { 0 };
+                let draw = |frame: &mut ratatui::Frame<'_>| {
+                    ui::draw(
+                        frame,
+                        &View {
+                            history: &history,
+                            latest: history.samples.back(),
+                            paused,
+                            help,
+                            absolute: true,
+                            step: false,
+                            theme,
+                            status: "test",
+                            span: 300.0,
+                            now: 2.0,
+                            program_elapsed_s: 2.0,
+                            stale: false,
+                            rate: 2.0,
+                            state: &state,
+                        },
+                    );
+                };
+                terminal.draw(draw).unwrap();
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer[(0, 0)].bg, theme.palette().background);
+                assert_eq!(buffer[(width / 2, 5)].bg, theme.palette().background);
+                if help {
+                    assert!(text(buffer).contains("t/T next/previous theme"));
+                } else {
+                    assert!(row(buffer, height - 1).contains("t theme"));
+                    assert!(row(buffer, height - 1).contains("? help"));
+                    assert!(row(buffer, 0).contains(if paused { "PAUSED" } else { "LIVE" }));
+                    assert!(row(buffer, 2).contains("10.00 W"));
+                    if width >= 80 {
+                        assert!(row(buffer, 0).contains(&theme.to_string()));
+                    }
+                }
+                theme = theme.cycle(false);
+            }
+        }
+    }
+    assert_eq!(serde_json::to_string(&history.samples).unwrap(), original);
+    assert_eq!(history.session.discharge_wh, energy);
+    assert_eq!((state.x, state.y), bounds);
+}
+
+#[test]
+fn prepared_render_matches_uncached_across_gaps_modes_and_viewports() {
+    let mut history = History::new(Duration::from_secs(30), 8, Duration::from_secs(5), true);
+    let mut state = state();
+    for (time, watts) in [
+        (0.0, Some(-10.0)),
+        (5.0, None),
+        (10.0, Some(-15.0)),
+        (25.0, Some(8.0)),
+        (30.0, Some(-5.0)),
+    ] {
+        let mut reading = sample(time, watts);
+        if watts.is_some_and(|watts| watts > 0.0) {
+            reading.state = State::Charging;
+        }
+        history.push(reading);
+    }
+    for stage in 0..3 {
+        if stage == 1 {
+            history.push(sample(45.0, Some(-30.0))); // Eviction and an integration gap.
+        } else if stage == 2 {
+            history.reset();
+            state.reset(50.0, 30.0);
+        }
+        for absolute in [false, true] {
+            for step in [false, true] {
+                let prepared = ui::PreparedHistory::new(&history, absolute, step);
+                state.advance(50.0, 30.0, &history, absolute);
+                let y = state.y;
+                for (width, height, theme, now, paused, help) in [
+                    (120, 32, Theme::Nord, 50.0, false, false),
+                    (80, 24, Theme::Default, 55.0, false, false),
+                    (60, 14, Theme::Mono, 60.0, true, false),
+                    (80, 24, Theme::CatppuccinLatte, 65.0, true, true),
+                ] {
+                    if !paused {
+                        state.advance_clock(now, 30.0, absolute);
+                        let end = now.max(if stage == 2 { 80.0 } else { 30.0 });
+                        assert_eq!(state.x, [end - 30.0, end]);
+                        assert_eq!(state.y, y);
+                    }
+                    let view = View {
+                        history: &history,
+                        latest: history.samples.back(),
+                        paused,
+                        help,
+                        absolute,
+                        step,
+                        theme,
+                        status: "test",
+                        span: 30.0,
+                        now,
+                        program_elapsed_s: now,
+                        stale: stage == 1,
+                        rate: 5.0,
+                        state: &state,
+                    };
+                    let mut cached = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    cached
+                        .draw(|frame| ui::draw_prepared(frame, &view, &prepared))
+                        .unwrap();
+                    let mut uncached = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    uncached.draw(|frame| ui::draw(frame, &view)).unwrap();
+                    assert_eq!(cached.backend().buffer(), uncached.backend().buffer());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn estimates_stay_visible_before_verbose_diagnostics() {
     let mut history = history();
     let mut sample = sample(0.0, Some(-12.4));

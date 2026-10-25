@@ -137,12 +137,17 @@ Displays use magnitudes with direction shown separately. Use `--signed` for sign
 On Linux and macOS, run `wpm` (or `./wpm` from an extracted archive) with the
 same options. The tray is Windows-only.
 
+The dashboard redraws when samples, keys, or terminal size change, with a
+one-second idle tick for the live clock and chart viewport. Sampling cadence,
+logging, and tray updates are independent of this display refresh.
+
 | Key | Action |
 | --- | --- |
 | `?` | Help and diagnostics |
 | Arrows / PageUp / PageDown / Home / End | Scroll while diagnostics is open |
 | `Space` | Freeze/resume the display; sampling continues |
 | `a` / `s` | Toggle magnitude/signed display / stepped chart |
+| `t` / `Shift+t` | Next / previous theme (session only) |
 | `r` | Reset history and session statistics |
 | `e` / `l` | Export displayed window / toggle CSV logging |
 | `q` | Quit |
@@ -165,10 +170,12 @@ CLI options override `WPM_RATE`, `WPM_X_LENGTH`, and `WPM_THEME`, then the file 
 Themes: `default`, `high-contrast`, `mono`, `tokyo-night`, `tokyo-night-storm`,
 `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`,
 `catppuccin-mocha`, and `nord`. Select with `--theme`, `WPM_THEME`, or the
-`theme` config value. Themes are selected at startup; there is no in-app theme
-switcher. For example, `wpm --theme nord`, or set `theme = "nord"` in the config
-for subsequent launches. Named palettes use true colour; the original three
-themes retain terminal colours.
+`theme` config value for the startup theme. Press `t` for the next theme or
+`Shift+t` for the previous one; cycling wraps through the list above and works
+while paused or viewing diagnostics. Switching does not reset history or change
+your config file. For example, `wpm --theme nord`, or set `theme = "nord"` in the
+config for subsequent launches. Named palettes use true colour; the original
+three themes retain terminal colours.
 
 ## Diagnostics
 

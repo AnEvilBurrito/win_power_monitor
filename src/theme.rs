@@ -1,4 +1,5 @@
 use crate::{cli::Theme, model::State};
+use clap::ValueEnum;
 use ratatui::style::{Color, Style};
 
 #[derive(Clone, Copy, Debug)]
@@ -29,7 +30,28 @@ impl Palette {
     }
 }
 
+impl std::fmt::Display for Theme {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            self.to_possible_value()
+                .expect("all themes have CLI names")
+                .get_name(),
+        )
+    }
+}
+
 impl Theme {
+    /// Cycle through the CLI theme order without changing saved configuration.
+    pub fn cycle(self, backwards: bool) -> Self {
+        let themes = Self::value_variants();
+        let index = themes
+            .iter()
+            .position(|theme| *theme == self)
+            .expect("all themes are CLI variants");
+        let offset = if backwards { themes.len() - 1 } else { 1 };
+        themes[(index + offset) % themes.len()]
+    }
+
     pub fn palette(self) -> Palette {
         match self {
             Self::Default | Self::HighContrast | Self::Mono => {

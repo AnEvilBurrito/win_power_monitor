@@ -50,6 +50,7 @@ fn all_theme_names_resolve_consistently() {
     for theme in Theme::value_variants() {
         let name = theme.to_possible_value().unwrap();
         let name = name.get_name();
+        assert_eq!(theme.to_string(), name);
         assert_eq!(
             resolve(&["--theme", name], &[], true).unwrap().theme,
             *theme
@@ -74,6 +75,30 @@ fn all_theme_names_resolve_consistently() {
     }
     assert!(resolve(&[], &[("WPM_THEME", "invalid")], true).is_err());
     assert!(Cli::try_parse_from(["wpm", "--theme", "invalid"]).is_err());
+}
+
+#[test]
+fn theme_cycle_visits_every_cli_theme_and_preserves_startup_settings() {
+    use clap::ValueEnum;
+    let themes = Theme::value_variants();
+    for (index, start) in themes.iter().copied().enumerate() {
+        let file = ConfigFile::new(&format!("theme = '{start}'\n"));
+        let original = std::fs::read_to_string(&file.0).unwrap();
+        let settings = resolve(&["--config", file.path()], &[], true).unwrap();
+        let mut selected = settings.theme;
+        for offset in 1..=themes.len() {
+            selected = selected.cycle(false);
+            assert_eq!(selected, themes[(index + offset) % themes.len()]);
+            assert_eq!(selected.cycle(true).cycle(false), selected);
+        }
+        assert_eq!(selected, start);
+        for _ in 0..themes.len() {
+            selected = selected.cycle(true);
+        }
+        assert_eq!(selected, start);
+        assert_eq!(settings.theme, start);
+        assert_eq!(std::fs::read_to_string(&file.0).unwrap(), original);
+    }
 }
 
 #[test]

@@ -52,8 +52,6 @@ impl UiState {
         self.y = self.absolute_y;
     }
     pub fn advance(&mut self, now: f64, span: f64, history: &History, absolute: bool) {
-        let end = now.max(self.origin + span);
-        self.x = [end - span, end];
         for (mode, bounds) in [(false, &mut self.signed_y), (true, &mut self.absolute_y)] {
             for w in history
                 .samples
@@ -69,6 +67,12 @@ impl UiState {
                 }
             }
         }
+        self.advance_clock(now, span, absolute);
+    }
+    /// Advance the live viewport without rescanning unchanged history.
+    pub fn advance_clock(&mut self, now: f64, span: f64, absolute: bool) {
+        let end = now.max(self.origin + span);
+        self.x = [end - span, end];
         self.select(absolute);
     }
     pub fn select(&mut self, absolute: bool) {
@@ -105,6 +109,38 @@ pub struct View<'a> {
     pub rate: f64,
     pub state: &'a UiState,
 }
+/// History-derived data only: independent of theme, terminal size, and viewport.
+/// Rebuild after history changes or signed/stepped mode switches. A paused view
+/// must keep using the cache for its frozen history, not incoming live samples.
+pub struct PreparedHistory {
+    segments: Vec<Vec<(f64, f64)>>,
+    window: Stats,
+}
+
+impl PreparedHistory {
+    pub fn new(history: &History, absolute: bool, step: bool) -> Self {
+        let mut segments: Vec<Vec<(f64, f64)>> = vec![vec![]];
+        for s in &history.samples {
+            let watts = s.watts.filter(|w| w.is_finite());
+            if s.gap || watts.is_none() {
+                segments.push(vec![]);
+            }
+            if let Some(w) = watts {
+                let w = if absolute { w.abs() } else { w };
+                let segment = segments.last_mut().expect("segment");
+                if step && let Some((_, previous)) = segment.last().copied() {
+                    segment.push((s.elapsed_s, previous));
+                }
+                segment.push((s.elapsed_s, w));
+            }
+        }
+        Self {
+            segments,
+            window: history.window(),
+        }
+    }
+}
+
 fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'static> {
     let (avg, min, max) = if absolute {
         (
@@ -129,6 +165,12 @@ fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'
     ])
 }
 pub fn draw(frame: &mut Frame, v: &View<'_>) {
+    let prepared = PreparedHistory::new(v.history, v.absolute, v.step);
+    draw_prepared(frame, v, &prepared);
+}
+
+/// Render a view using data prepared for the same history and display modes.
+pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory) {
     let area = frame.area();
     let palette = v.theme.palette();
     frame.render_widget(Block::default().style(palette.style()), area);
@@ -193,7 +235,14 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                 })
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("   {source}"), dim),
+        Span::styled(
+            if area.width >= 80 {
+                format!("   {source} · {}", v.theme)
+            } else {
+                format!("   {source}")
+            },
+            dim,
+        ),
     ]);
     let top = Layout::horizontal([Constraint::Min(0), Constraint::Length(8)]).split(rows[0]);
     frame.render_widget(Paragraph::new(left), top[0]);
@@ -309,23 +358,6 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         vec![Line::from(" Waiting for measured power")]
     };
     frame.render_widget(Paragraph::new(kpi), rows[2]);
-    let mut segments: Vec<Vec<(f64, f64)>> = vec![vec![]];
-    for s in &v.history.samples {
-        let watts = s.watts.filter(|w| w.is_finite());
-        if s.gap || watts.is_none() {
-            segments.push(vec![]);
-        }
-        if let Some(w) = watts {
-            let w = if v.absolute { w.abs() } else { w };
-            let segment = segments.last_mut().expect("segment");
-            if v.step
-                && let Some((_, previous)) = segment.last().copied()
-            {
-                segment.push((s.elapsed_s, previous));
-            }
-            segment.push((s.elapsed_s, w));
-        }
-    }
     let zero = [(v.state.x[0], 0.0), (v.state.x[1], 0.0)];
     let mut datasets = vec![
         Dataset::default()
@@ -333,13 +365,19 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
             .graph_type(GraphType::Line)
             .style(dim),
     ];
-    datasets.extend(segments.iter().filter(|s| !s.is_empty()).map(|data| {
-        Dataset::default()
-            .data(data)
-            .marker(symbols::Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::default().fg(palette.axes))
-    }));
+    datasets.extend(
+        prepared
+            .segments
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|data| {
+                Dataset::default()
+                    .data(data)
+                    .marker(symbols::Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(palette.axes))
+            }),
+    );
     let bounds = v.state.y;
     let ticks = [bounds[0], (bounds[0] + bounds[1]) / 2.0, bounds[1]];
     let chart_rows = Layout::vertical([
@@ -377,7 +415,7 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
         chart_rows[1],
     );
     let mut stats = vec![
-        stat_line("Window", &v.history.window(), v.absolute, palette),
+        stat_line("Window", &prepared.window, v.absolute, palette),
         stat_line("Session", &v.history.session, v.absolute, palette),
     ];
     if rows[6].height >= 5 {
@@ -413,9 +451,11 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
     frame.render_widget(Paragraph::new(stats), rows[6]);
     frame.render_widget(
         Paragraph::new(if area.width >= 100 {
-            " q quit · space pause · r reset · e export · l log · a signed/abs · s step · ? help"
+            " q quit · space pause · r reset · e export · l log · a signed/abs · s step · t theme · ? help"
+        } else if area.width >= 80 {
+            " q quit · space pause · r reset · e export · t theme · ? help"
         } else {
-            " q quit · space pause · r reset · e export · ? help"
+            " q quit · space pause · t theme · ? help"
         })
         .style(dim),
         rows[8],
@@ -491,13 +531,14 @@ pub fn draw(frame: &mut Frame, v: &View<'_>) {
                 },
             );
         let content = format!(
-            "Battery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nSession: since launch/reset; gaps separate epochs.\n{status}\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export · l log · a signed/magnitude · s step\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
+            "Battery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nTheme: {theme} (session only)\nSession: since launch/reset; gaps separate epochs.\n{status}\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export · l log · a signed/magnitude · s step\nt/T next/previous theme\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
             v.latest.map_or("—".into(), remaining_label),
             number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),
             if v.absolute { "magnitude" } else { "signed" },
             v.span,
             analytics = analytics_label(v),
             status = v.status,
+            theme = v.theme,
         );
         let paragraph = Paragraph::new(content).wrap(Wrap { trim: true });
         let inner_width = popup.width.saturating_sub(2);

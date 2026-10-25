@@ -1,5 +1,5 @@
 use crate::{
-    cli::Mode,
+    cli::{Mode, Theme},
     config::Settings,
     export::Log,
     model::{History, Metrics, Sample, number, stamp_completion},
@@ -7,7 +7,7 @@ use crate::{
     tray::{Latest, Reading, Tray},
     ui,
 };
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::{
     io::{self, Write},
     sync::{
@@ -17,6 +17,50 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+/// Accept plain/shifted theme shortcuts, never release events or Ctrl/Alt chords.
+fn theme_for_key(theme: Theme, key: KeyEvent) -> Option<Theme> {
+    if key.kind == KeyEventKind::Release || !(key.modifiers & !KeyModifiers::SHIFT).is_empty() {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('t') => Some(theme.cycle(key.modifiers.contains(KeyModifiers::SHIFT))),
+        KeyCode::Char('T') => Some(theme.cycle(true)),
+        _ => None,
+    }
+}
+
+/// Redraw on changes, with a one-second idle tick for clocks and stale status.
+#[derive(Default)]
+struct DashboardRefresh {
+    last_draw: Option<Instant>,
+    dirty: bool,
+    prepared: Option<ui::PreparedHistory>,
+}
+impl DashboardRefresh {
+    fn due(&self, now: Instant) -> bool {
+        self.dirty
+            || self
+                .last_draw
+                .is_none_or(|last| now.saturating_duration_since(last) >= Duration::from_secs(1))
+    }
+    fn request(&mut self) {
+        self.dirty = true;
+    }
+    fn invalidate(&mut self) {
+        self.prepared = None;
+        self.request();
+    }
+    fn sample_received(&mut self, paused: bool) {
+        if !paused {
+            self.invalidate();
+        }
+    }
+    fn drawn(&mut self, now: Instant) {
+        self.last_draw = Some(now);
+        self.dirty = false;
+    }
+}
 
 struct Sampler {
     stop: Arc<AtomicBool>,
@@ -194,9 +238,11 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     let mut help = false;
     let mut absolute = settings.absolute;
     let mut step = settings.step;
+    let mut theme = settings.theme;
     let mut last_received = Instant::now();
     let mut frozen = 0.0;
     let mut frozen_view: Option<(History, Option<Sample>)> = None;
+    let mut refresh = DashboardRefresh::default();
     let mut code = 0;
     while !stop.load(Ordering::Acquire) {
         for s in receiver.try_iter() {
@@ -207,84 +253,117 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             }
             write_log(&mut log, &s, &mut status);
             current = Some(history.push(s));
+            refresh.sample_received(paused);
             if let Some(sample) = &current {
                 ui_state.analytics.observe(sample);
             }
         }
-        let tray_status = tray
-            .as_ref()
-            .and_then(|t| t.status.lock().ok().map(|s| s.clone()))
-            .unwrap_or_else(|| "off".into());
-        let banner = format!(
-            "{status} | log {} | tray {tray_status} | {:.2}s | {} pts max | {}",
-            if log.is_some() { "on" } else { "off" },
-            rate.as_secs_f64(),
-            settings.sample_count,
-            if settings.all_states {
-                "all-state stats"
-            } else {
-                "discharge stats"
-            }
-        );
-        if !paused {
-            ui_state
-                .analytics
-                .refresh(&history, start.elapsed().as_secs_f64(), help);
-        } else if help
-            && ui_state.frozen_analytics.is_none()
-            && let Some((frozen_history, _)) = &frozen_view
-            && ui_state
-                .analytics
-                .refresh(frozen_history, start.elapsed().as_secs_f64(), true)
-        {
-            ui_state.frozen_analytics = ui_state.analytics.summary.clone();
-        }
-        if !paused {
-            ui_state.advance(
-                start.elapsed().as_secs_f64(),
-                settings.x_length.as_secs_f64(),
-                &history,
-                absolute,
+        if refresh.due(Instant::now()) {
+            let tray_status = tray
+                .as_ref()
+                .and_then(|t| t.status.lock().ok().map(|s| s.clone()))
+                .unwrap_or_else(|| "off".into());
+            let banner = format!(
+                "{status} | log {} | tray {tray_status} | {:.2}s | {} pts max | {}",
+                if log.is_some() { "on" } else { "off" },
+                rate.as_secs_f64(),
+                settings.sample_count,
+                if settings.all_states {
+                    "all-state stats"
+                } else {
+                    "discharge stats"
+                }
             );
-        } else {
-            ui_state.select(absolute);
-        }
-        terminal
-            .draw(|f| {
-                ui::draw(
-                    f,
-                    &ui::View {
-                        history: frozen_view.as_ref().map_or(&history, |v| &v.0),
-                        latest: frozen_view
-                            .as_ref()
-                            .map_or(current.as_ref(), |v| v.1.as_ref()),
-                        paused,
-                        help,
+            if !paused {
+                ui_state
+                    .analytics
+                    .refresh(&history, start.elapsed().as_secs_f64(), help);
+            } else if help
+                && ui_state.frozen_analytics.is_none()
+                && let Some((frozen_history, _)) = &frozen_view
+                && ui_state
+                    .analytics
+                    .refresh(frozen_history, start.elapsed().as_secs_f64(), true)
+            {
+                ui_state.frozen_analytics = ui_state.analytics.summary.clone();
+            }
+            if refresh.prepared.is_none() {
+                if !paused {
+                    ui_state.advance(
+                        start.elapsed().as_secs_f64(),
+                        settings.x_length.as_secs_f64(),
+                        &history,
                         absolute,
-                        step,
-                        theme: settings.theme,
-                        status: &banner,
-                        span: settings.x_length.as_secs_f64(),
-                        now: if paused {
-                            frozen
-                        } else {
-                            start.elapsed().as_secs_f64()
+                    );
+                }
+                refresh.prepared = Some(ui::PreparedHistory::new(
+                    frozen_view.as_ref().map_or(&history, |v| &v.0),
+                    absolute,
+                    step,
+                ));
+            }
+            if !paused {
+                ui_state.advance_clock(
+                    start.elapsed().as_secs_f64(),
+                    settings.x_length.as_secs_f64(),
+                    absolute,
+                );
+            } else {
+                ui_state.select(absolute);
+            }
+            terminal
+                .draw(|f| {
+                    ui::draw_prepared(
+                        f,
+                        &ui::View {
+                            history: frozen_view.as_ref().map_or(&history, |v| &v.0),
+                            latest: frozen_view
+                                .as_ref()
+                                .map_or(current.as_ref(), |v| v.1.as_ref()),
+                            paused,
+                            help,
+                            absolute,
+                            step,
+                            theme,
+                            status: &banner,
+                            span: settings.x_length.as_secs_f64(),
+                            now: if paused {
+                                frozen
+                            } else {
+                                start.elapsed().as_secs_f64()
+                            },
+                            program_elapsed_s: start.elapsed().as_secs_f64(),
+                            stale: !paused && last_received.elapsed() > rate * 2,
+                            rate: rate.as_secs_f64(),
+                            state: &ui_state,
                         },
-                        program_elapsed_s: start.elapsed().as_secs_f64(),
-                        stale: !paused && last_received.elapsed() > rate * 2,
-                        rate: rate.as_secs_f64(),
-                        state: &ui_state,
-                    },
-                )
-            })
-            .map_err(|e| e.to_string())?;
-        if help {
-            ui_state.help_scroll = ui_state.help_scroll.min(ui_state.help_max.get());
+                        refresh
+                            .prepared
+                            .as_ref()
+                            .expect("prepared displayed history"),
+                    )
+                })
+                .map_err(|e| e.to_string())?;
+            if help {
+                ui_state.help_scroll = ui_state.help_scroll.min(ui_state.help_max.get());
+            }
+            refresh.drawn(Instant::now());
         }
-        if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())?
-            && let Event::Key(key) = event::read().map_err(|e| e.to_string())?
-        {
+        if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
+            let input = event::read().map_err(|e| e.to_string())?;
+            if matches!(input, Event::Resize(_, _)) {
+                refresh.request();
+            }
+            let Event::Key(key) = input else {
+                continue;
+            };
             if key.kind == event::KeyEventKind::Release {
+                continue;
+            }
+            refresh.request();
+            if let Some(next) = theme_for_key(theme, key) {
+                theme = next;
+                status = format!("theme: {theme} (session only)");
                 continue;
             }
             match key.code {
@@ -293,6 +372,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     stop.store(true, Ordering::Release)
                 }
                 KeyCode::Char(' ') => {
+                    refresh.invalidate();
                     paused = !paused;
                     frozen = start.elapsed().as_secs_f64();
                     frozen_view = if paused {
@@ -308,6 +388,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     }
                 }
                 KeyCode::Char('r') => {
+                    refresh.invalidate();
                     history.reset();
                     ui_state.reset(
                         start.elapsed().as_secs_f64(),
@@ -338,8 +419,14 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 }
                 KeyCode::Home if help => ui_state.help_scroll = 0,
                 KeyCode::End if help => ui_state.help_scroll = ui_state.help_max.get(),
-                KeyCode::Char('a') => absolute = !absolute,
-                KeyCode::Char('s') => step = !step,
+                KeyCode::Char('a') => {
+                    absolute = !absolute;
+                    refresh.invalidate();
+                }
+                KeyCode::Char('s') => {
+                    step = !step;
+                    refresh.invalidate();
+                }
                 KeyCode::Char('e') => {
                     if let Some(l) = &mut log {
                         let _ = l.flush();
@@ -391,5 +478,114 @@ pub fn next_deadline(previous: Instant, completed: Instant, rate: Duration) -> I
         completed + rate
     } else {
         next
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_idle_tick_and_changes_drive_redraws() {
+        let start = Instant::now();
+        let mut refresh = DashboardRefresh::default();
+        let mut frames = 0;
+        for tick in 0..=100 {
+            let now = start + Duration::from_millis(tick * 100);
+            if refresh.due(now) {
+                frames += 1;
+                refresh.drawn(now);
+            }
+        }
+        assert_eq!(frames, 11, "idle rendering is 1 Hz, not 10 Hz");
+        let now = start + Duration::from_millis(10_100);
+        assert!(!refresh.due(now));
+        refresh.request(); // Key or resize: do not wait for the next clock tick.
+        assert!(refresh.due(now));
+        refresh.drawn(now);
+        assert!(!refresh.due(now));
+        refresh.sample_received(false);
+        assert!(refresh.due(now));
+    }
+
+    #[test]
+    fn paused_samples_and_theme_or_resize_requests_keep_prepared_history() {
+        let history = History::new(Duration::from_secs(300), 60, Duration::from_secs(5), false);
+        let mut refresh = DashboardRefresh {
+            prepared: Some(ui::PreparedHistory::new(&history, true, false)),
+            ..DashboardRefresh::default()
+        };
+        refresh.drawn(Instant::now());
+        refresh.sample_received(true);
+        assert!(refresh.prepared.is_some());
+        assert!(!refresh.dirty);
+        refresh.request();
+        assert!(refresh.prepared.is_some());
+        refresh.sample_received(false);
+        assert!(refresh.prepared.is_none());
+        refresh.prepared = Some(ui::PreparedHistory::new(&history, true, false));
+        refresh.invalidate(); // Reset, pause/resume, signed/stepped mode changes.
+        assert!(refresh.prepared.is_none());
+        assert!(refresh.dirty);
+    }
+
+    #[test]
+    fn theme_shortcuts_cycle_both_directions_and_wrap() {
+        let next = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        let previous = KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT);
+        assert_eq!(
+            theme_for_key(Theme::Default, next),
+            Some(Theme::HighContrast)
+        );
+        assert_eq!(theme_for_key(Theme::Nord, next), Some(Theme::Default));
+        assert_eq!(theme_for_key(Theme::Default, previous), Some(Theme::Nord));
+        assert_eq!(
+            theme_for_key(Theme::Mono, previous),
+            Some(Theme::HighContrast)
+        );
+        // Some terminals encode Shift+t as lowercase plus a modifier.
+        assert_eq!(
+            theme_for_key(
+                Theme::Default,
+                KeyEvent::new(KeyCode::Char('t'), KeyModifiers::SHIFT)
+            ),
+            Some(Theme::Nord)
+        );
+        assert_eq!(
+            theme_for_key(
+                Theme::Default,
+                KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE)
+            ),
+            Some(Theme::Nord)
+        );
+    }
+
+    #[test]
+    fn theme_shortcuts_ignore_release_events_and_modified_chords() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ] {
+            assert_eq!(
+                theme_for_key(Theme::Default, KeyEvent::new(KeyCode::Char('t'), modifiers)),
+                None
+            );
+        }
+        let mut key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        key.kind = KeyEventKind::Release;
+        assert_eq!(theme_for_key(Theme::Default, key), None);
+        key.kind = KeyEventKind::Repeat;
+        assert_eq!(
+            theme_for_key(Theme::Default, key),
+            Some(Theme::HighContrast)
+        );
+        assert_eq!(
+            theme_for_key(
+                Theme::Default,
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
+            ),
+            None
+        );
     }
 }

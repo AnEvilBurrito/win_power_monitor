@@ -1,3 +1,19 @@
+# Unreleased
+
+- Switch dashboard themes with `t` (next) and `Shift+t` (previous), wrapping
+  through all themes. Works while paused and in diagnostics without resetting
+  history. Changes are session-only; startup configuration is unchanged.
+- Show the active theme in the header at 80+ columns and in diagnostics, and add
+  theme shortcuts to the dashboard footer and help.
+- Reduce idle dashboard rendering from roughly ten frames per second to one,
+  while samples, keys, and terminal resizes request a redraw on the next loop.
+  Live elapsed time and chart scrolling continue; sampling, logging, and tray
+  cadence are unchanged.
+- Cache chart points and window statistics between samples, including frozen
+  views. Theme changes and resizes reuse the cache; reset, pause/resume, and
+  signed/stepped switches rebuild it. Add regression tests and a reproducible
+  [synthetic rendering benchmark](dev/dashboard-performance.md).
+
 # Version 0.1.4 - theme and diagnostics readability fixes for 0.1.3
 
 - Apply the selected theme background to the chart canvas rather than falling
