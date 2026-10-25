@@ -17,7 +17,10 @@ plist output with the `plist` crate. This is an intentional first-version tradeo
 one subprocess per snapshot instead of unsafe IOKit/CoreFoundation bindings.
 The existing Collector makes three snapshots per tick. Measure overhead on a Mac;
 the normal five-second sampling interval is the initial target. Repeated reads do
-not imply refreshed hardware telemetry.
+not imply refreshed hardware telemetry. See the deferred
+[telemetry cadence investigation](macos-telemetry-cadence.md) for the Apple Silicon
+user observation, private refresh-request API, and alternative power sources;
+these are investigation options, not implemented support.
 
 Only the AppleSmartBattery class is queried; peripheral batteries and UPS power
 sources are not included. Use IORegistryEntryID for per-session identity. Native
