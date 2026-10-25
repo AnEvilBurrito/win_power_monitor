@@ -177,32 +177,6 @@ your config file. For example, `wpm --theme nord`, or set `theme = "nord"` in th
 config for subsequent launches. Named palettes use true colour; the original
 three themes retain terminal colours.
 
-## Diagnostics
-
-Generate synthetic dashboard and diagnostics previews
-with `cargo test --test dashboard theme_review_artifact`, then open
-`target/ui-review/themes.html` for manual review.
-
-The `?` diagnostics overlay scrolls with arrows, PageUp/PageDown, and Home/End.
-It includes per-battery design capacity (Wh where supported) and capacity-based
-health (full-charge / design capacity), not state of charge or a safety rating.
-Windows and Linux reuse available capacity metadata; current macOS acquisition
-does not provide these energy capacities. Missing values remain unavailable.
-
-Experimental derived diagnostics use the latest contiguous history segment,
-requiring at least 10 valid readings and 60 seconds of coverage. Average-consumption
-ETA uses remaining Wh divided by time-weighted discharge power and does not replace
-the existing ETA. The idle-power proxy rounds consumption readings to whole watts
-to find a unique mode, then averages original readings within an inclusive +/-1 W
-of that mode. Tied modes and estimates at or above the overall arithmetic mean
-are unavailable. Idle percentage is the fraction of
-readings strictly below their arithmetic mean, not measured system idle time.
-Charging/mixed battery flow is excluded; confirmed system-input power supports
-the idle proxies but not battery runtime. Analytics refresh at most every 30
-seconds, only while diagnostics is visible and history has changed, with no extra
-hardware polls. Paused results freeze; reset clears results. These experimental
-proxies still need real-workload validation.
-
 ## Build from source
 
 Requires **Rust stable (MSVC toolchain)**, **Visual Studio C++ Build Tools**, and the **Windows SDK**.
