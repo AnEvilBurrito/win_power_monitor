@@ -1,3 +1,11 @@
+# Unreleased
+
+- Fix false multi-battery `TRANSITION` readings when packs switch between idle
+  and active across polls without changing combined AC/charging/discharging state.
+  Preserve valid power, capacities, chart continuity, energy integration and
+  discharge estimates. Topology/tag changes, AC or combined-direction changes,
+  invalid readings and inconsistent within-poll collections remain guarded.
+
 # Version 0.1.5 - live themes and lighter dashboard rendering
 
 - Cycle themes with `t` / `Shift+t` without resetting history or changing saved settings.

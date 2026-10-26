@@ -86,6 +86,169 @@ fn aggregation_matrix() {
     }
 }
 #[test]
+fn idle_pack_handoffs_preserve_flow_history_and_estimators() {
+    // Synthetic reproduction of the reported five-minute idle/discharge toggling.
+    // Also cover charging and an active direction flag with a zero rate.
+    for sign in [-1, 1] {
+        let rate = Duration::from_secs(5);
+        let mut c = Collector::default();
+        let mut metrics = Metrics::new(rate);
+        let mut history = History::new(Duration::from_secs(300), 60, rate, true);
+        let mut previous_magnitude: Option<f64> = None;
+        let mut expected_wh = 0.;
+        let handoff_rates = [0, 80, 121, 0, 24, 0];
+        for i in 0..60 {
+            let handoff_rate = handoff_rates[i as usize % handoff_rates.len()];
+            let mut a = member("a", sign * handoff_rate);
+            let mut b = member("b", sign * 14000);
+            if i % 6 == 5 {
+                a.reading.power_state = if sign < 0 { 2 } else { 4 };
+            }
+            if sign > 0 {
+                a.reading.power_state |= 1;
+                b.reading.power_state |= 1;
+            }
+            b.reading.capacity = if sign < 0 {
+                25000 - i * 10
+            } else {
+                25000 + i * 10
+            };
+            let mut script = Script::stable(&[a, b]);
+            let mut s = collect(&mut c, &mut script, f64::from(i) * 5.);
+            metrics.apply(&mut s);
+            let s = history.push(s);
+            let magnitude = f64::from(14000 + handoff_rate) / 1000.;
+            assert_eq!(script.calls, 3);
+            assert!(s.available);
+            assert!(!s.transition);
+            assert!(!s.gap);
+            assert_eq!(s.reason, None);
+            assert_eq!(s.topology_epoch, 0);
+            assert_eq!(s.battery_count, 2);
+            assert_eq!(
+                s.state,
+                if sign < 0 {
+                    State::Discharging
+                } else {
+                    State::Charging
+                }
+            );
+            assert!((s.watts.unwrap() - f64::from(sign) * magnitude).abs() < 1e-10);
+            assert!(s.pct.is_some() && s.remaining_wh.is_some());
+            assert!(s.batteries.iter().all(|b| {
+                b.available && b.remaining_wh.is_some() && b.full_charged_wh.is_some()
+            }));
+            if sign < 0 {
+                assert!(s.eta_s.is_some());
+                if i >= 2 {
+                    assert!(s.drain_pct_hr.is_some());
+                }
+            } else {
+                assert_eq!(s.eta_s, None);
+                assert_eq!(s.drain_pct_hr, None);
+            }
+            if let Some(previous) = previous_magnitude {
+                expected_wh += (previous + magnitude) * 0.5 * 5. / 3600.;
+            }
+            previous_magnitude = Some(magnitude);
+        }
+        assert_eq!(history.session.count, 60);
+        assert_eq!(history.session.covered_s, 295.);
+        let energy = if sign < 0 {
+            history.session.discharge_wh
+        } else {
+            history.session.charge_wh
+        };
+        assert!((energy - expected_wh).abs() < 1e-10);
+    }
+}
+
+#[test]
+fn load_handoffs_preserve_combined_direction() {
+    for (rates, state) in [
+        (
+            vec![(-14000, 0), (0, -14000), (-7000, -7000)],
+            State::Discharging,
+        ),
+        (vec![(14000, 0), (0, 14000), (7000, 7000)], State::Charging),
+        (vec![(-14000, 1000), (1000, -14000)], State::Mixed),
+    ] {
+        let mut c = Collector::default();
+        for (i, (a, b)) in rates.into_iter().enumerate() {
+            let s = collect(
+                &mut c,
+                &mut Script::stable(&[member("a", a), member("b", b)]),
+                i as f64 * 5.,
+            );
+            assert!(s.available && !s.transition && !s.gap);
+            assert_eq!(s.state, state);
+            assert_eq!(s.watts, Some(f64::from(a + b) / 1000.));
+        }
+    }
+}
+
+#[test]
+fn combined_direction_changes_between_polls_still_invalidate() {
+    for (rates, expected_state) in [
+        ((0, 0), State::Idle),
+        ((14000, 0), State::Charging),
+        ((14000, -1000), State::Mixed),
+    ] {
+        let rate = Duration::from_secs(5);
+        let mut c = Collector::default();
+        let mut metrics = Metrics::new(rate);
+        let mut history = History::new(Duration::from_secs(300), 60, rate, true);
+        let mut old = [member("a", -14000), member("b", 0)];
+        for i in 0..3 {
+            old[0].reading.capacity -= 100;
+            let mut s = collect(&mut c, &mut Script::stable(&old), f64::from(i) * 5.);
+            metrics.apply(&mut s);
+            history.push(s);
+        }
+        assert!(history.samples.back().unwrap().drain_pct_hr.is_some());
+        let wh = history.session.discharge_wh;
+        let rows = [member("a", rates.0), member("b", rates.1)];
+        let mut s = collect(&mut c, &mut Script::stable(&rows), 15.);
+        metrics.apply(&mut s);
+        assert!(s.transition && s.gap && !s.available);
+        assert_eq!(s.reason.as_deref(), Some("native_transition"));
+        assert_eq!(s.topology_epoch, 0);
+        assert_eq!(s.watts, None);
+        assert_eq!(s.eta_s, None);
+        assert_eq!(s.drain_pct_hr, None);
+        history.push(s);
+        let mut recovered = collect(&mut c, &mut Script::stable(&rows), 20.);
+        metrics.apply(&mut recovered);
+        assert!(recovered.available && !recovered.transition && recovered.gap);
+        assert_eq!(recovered.state, expected_state);
+        assert_eq!(recovered.eta_s, None);
+        history.push(recovered);
+        assert_eq!(history.session.discharge_wh, wh);
+        assert_eq!(history.session.charge_wh, 0.);
+    }
+}
+
+#[test]
+fn idle_pack_changes_during_collection_still_invalidate() {
+    let rows = vec![member("a", 0), member("b", -14000)];
+    let changed = vec![member("a", -80), member("b", -14000)];
+    for phase in 0..3 {
+        let mut c = Collector::default();
+        collect(&mut c, &mut Script::stable(&rows), 0.);
+        let mut steps = vec![Ok(rows.clone()); 3];
+        steps[phase] = Ok(changed.clone());
+        let mut script = Script::new(steps);
+        let s = collect(&mut c, &mut script, 5.);
+        assert_eq!(script.calls, 3);
+        assert!(s.transition && s.gap && !s.available);
+        assert_eq!(s.reason.as_deref(), Some("native_charger_transition"));
+        assert_eq!(s.watts, None);
+        assert!(collect(&mut c, &mut Script::stable(&changed), 10.).transition);
+        assert!(collect(&mut c, &mut Script::stable(&changed), 15.).available);
+    }
+}
+
+#[test]
 fn independent_capacity_and_invalid_rate_matrix() {
     for mode in 0..6 {
         let mut rows = vec![member("a", -10000), member("b", -5000)];

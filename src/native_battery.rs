@@ -63,7 +63,7 @@ pub trait Backend {
 pub struct Collector {
     ordinals: std::collections::BTreeMap<String, usize>,
     membership: Option<Vec<(String, u32)>>,
-    observations: Option<Vec<(String, u32)>>,
+    power_state: Option<u32>,
     epoch: u64,
     invalidated: bool,
 }
@@ -141,16 +141,22 @@ impl Collector {
                 return Err("native_conflicting_ac".into());
             }
             let k = keys(&reads);
-            let obs = observations(&reads);
+            // Between complete collections, compare combined AC/direction flags.
+            // A pack becoming idle or active is not a transition when the combined
+            // operating state is unchanged. Per-pack checks above remain strict
+            // within each collection, where a handoff could mix observations.
+            let power_state = reads
+                .iter()
+                .fold(0, |state, m| state | (m.reading.power_state & 7));
             let changed = self.membership.as_ref().is_some_and(|old| *old != k);
-            let direction_changed = self.observations.as_ref().is_some_and(|old| *old != obs);
+            let power_state_changed = self.power_state.is_some_and(|old| old != power_state);
             if changed {
                 self.epoch += 1;
             }
-            s.transition = changed || direction_changed || self.invalidated;
+            s.transition = changed || power_state_changed || self.invalidated;
             s.gap |= s.transition;
             self.membership = Some(k);
-            self.observations = Some(obs);
+            self.power_state = Some(power_state);
             self.invalidated = false;
             apply_members(s, &reads);
             if !reads.is_empty() && !s.available {
