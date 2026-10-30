@@ -61,9 +61,14 @@ automatically. Current development builds no longer create it.
 SMC keys `B0AV` and `B0AC` are undocumented and their availability, encoding,
 measurement meaning, and update cadence need real-hardware validation. The
 JSON identifies SMC-backed readings separately from ASB fallback readings.
-Design capacity remains experimental: where plausible DesignCapacity and
-DesignVoltage are present, WPM assumes mAh and mV respectively and estimates
-Wh; these assumptions need validation. Values remain unavailable otherwise.
+Remaining/full Wh are experimental estimates from AppleRawCurrentCapacity /
+AppleRawMaxCapacity (assumed mAh) and battery voltage (mV). Design Wh uses
+BatteryData.DesignCapacity or the top-level DesignCapacity. For all three,
+WPM uses a plausible DesignVoltage when available, otherwise the live battery
+voltage as an approximation—not a nominal voltage or measured energy. These
+assumptions need hardware validation; missing or implausible fields stay
+unavailable. Normalized CurrentCapacity / MaxCapacity are never interpreted as
+mAh. The existing JSON export contains these estimates.
 
 ## Check real readings
 

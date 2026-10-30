@@ -36,15 +36,47 @@ pub fn percent(properties: &Dictionary) -> Option<f64> {
         .or_else(|| ratio("CurrentCapacity", "MaxCapacity"))
 }
 
-/// Experimental estimate, only when charge and nominal voltage are plausible.
-/// DesignCapacity is interpreted as mAh and DesignVoltage as mV.
-pub fn design_capacity_mwh(properties: &Dictionary) -> Option<u32> {
-    let capacity = integer(properties, "DesignCapacity")?;
-    let voltage = integer(properties, "DesignVoltage")?;
-    if !(1000..=30000).contains(&capacity) || !(3000..=30000).contains(&voltage) {
+/// Experimental energy approximation: charge in mAh multiplied by voltage in mV.
+/// Live voltage is a proxy, not a nominal voltage or a measured energy value.
+fn energy_mwh(charge: i64, voltage: i64) -> Option<u32> {
+    if !(0..=30000).contains(&charge) || !(3000..=30000).contains(&voltage) {
         return None;
     }
-    u32::try_from(capacity.checked_mul(voltage)? / 1000).ok()
+    u32::try_from(charge.checked_mul(voltage)?.checked_add(500)? / 1000).ok()
+}
+
+fn capacity_voltage(properties: &Dictionary) -> Option<i64> {
+    let battery_data = properties.get("BatteryData").and_then(Value::as_dictionary);
+    integer(properties, "DesignVoltage")
+        .or_else(|| battery_data.and_then(|data| integer(data, "DesignVoltage")))
+        .filter(|voltage| (3000..=30000).contains(voltage))
+        .or_else(|| integer(properties, "Voltage"))
+}
+
+pub fn design_capacity_mwh(properties: &Dictionary) -> Option<u32> {
+    let battery_data = properties.get("BatteryData").and_then(Value::as_dictionary);
+    let capacity = battery_data
+        .and_then(|data| integer(data, "DesignCapacity"))
+        .or_else(|| integer(properties, "DesignCapacity"))?;
+    if capacity < 1000 {
+        return None;
+    }
+    energy_mwh(capacity, capacity_voltage(properties)?)
+}
+
+/// Use only the paired AppleRaw charge fields, never normalized percentages.
+pub fn charge_energy_mwh(properties: &Dictionary) -> (Option<u32>, Option<u32>) {
+    let Some(voltage) = capacity_voltage(properties) else {
+        return (None, None);
+    };
+    let remaining = integer(properties, "AppleRawCurrentCapacity");
+    let full =
+        integer(properties, "AppleRawMaxCapacity").filter(|value| (1000..=30000).contains(value));
+    let remaining = remaining.filter(|value| full.is_none_or(|max| *value <= max));
+    (
+        remaining.and_then(|value| energy_mwh(value, voltage)),
+        full.and_then(|value| energy_mwh(value, voltage)),
+    )
 }
 
 pub fn parse_member(properties: &Dictionary) -> Result<Option<Member>, String> {
@@ -73,10 +105,11 @@ pub fn parse_member(properties: &Dictionary) -> Result<Option<Member>, String> {
         .and_then(|value| i32::try_from(value * i64::from(voltage) / 1000).ok())
         .filter(|value| *value != i32::MIN)
         .unwrap_or(i32::MIN);
+    let (remaining_mwh, full_mwh) = charge_energy_mwh(properties);
     Ok(Some(Member {
         id: format!("ioreg:{identity}"),
         tag: 1,
-        full_charged_capacity: u32::MAX,
+        full_charged_capacity: full_mwh.unwrap_or(u32::MAX),
         designed_capacity: design_capacity_mwh(properties).unwrap_or(u32::MAX),
         default_alert1: u32::MAX,
         default_alert2: u32::MAX,
@@ -89,7 +122,7 @@ pub fn parse_member(properties: &Dictionary) -> Result<Option<Member>, String> {
         reading: Reading {
             capabilities: 0x8000_0000,
             power_state: direction.unwrap_or(0) | u32::from(ac == Some(true)),
-            capacity: u32::MAX,
+            capacity: remaining_mwh.unwrap_or(u32::MAX),
             voltage,
             rate,
         },

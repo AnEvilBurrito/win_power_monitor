@@ -219,7 +219,7 @@ impl Provider {
         }
         sample
             .diagnostics
-            .push("macos: experimental IORegistry battery flow and capacity".into());
+            .push("macos: capacity Wh estimates use charge and nominal or live voltage".into());
         if let Some(name) = &self.system_meter {
             sample.diagnostics.push(format!(
                 "--system-meter {name}: unsupported on macOS; battery flow only"

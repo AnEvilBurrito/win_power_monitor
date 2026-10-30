@@ -40,10 +40,10 @@ fn signed_flow_and_capacity_units() {
 }
 
 #[test]
-fn experimental_design_capacity_requires_plausible_charge_and_nominal_voltage() {
+fn experimental_design_capacity_uses_nominal_or_live_voltage() {
     let mut properties = battery(-1000, false);
     properties.insert("DesignCapacity".into(), Value::Integer(5000.into()));
-    assert_eq!(macos::design_capacity_mwh(&properties), None);
+    assert_eq!(macos::design_capacity_mwh(&properties), Some(60000));
     properties.insert("DesignVoltage".into(), Value::Integer(12000.into()));
     assert_eq!(macos::design_capacity_mwh(&properties), Some(60000));
     assert_eq!(
@@ -57,6 +57,39 @@ fn experimental_design_capacity_requires_plausible_charge_and_nominal_voltage() 
     assert_eq!(macos::design_capacity_mwh(&properties), None);
     properties.insert("DesignCapacity".into(), Value::Integer(5000.into()));
     properties.insert("DesignVoltage".into(), Value::Integer(0.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), Some(60000));
+    properties.remove("Voltage");
+    assert_eq!(macos::design_capacity_mwh(&properties), None);
+}
+
+#[test]
+fn raw_charge_capacity_estimates_and_nested_design() {
+    let mut properties = battery(-1000, false);
+    properties.insert(
+        "AppleRawCurrentCapacity".into(),
+        Value::Integer(3000.into()),
+    );
+    properties.insert("AppleRawMaxCapacity".into(), Value::Integer(5000.into()));
+    let mut nested = Dictionary::new();
+    nested.insert("DesignCapacity".into(), Value::Integer(5500.into()));
+    properties.insert("BatteryData".into(), Value::Dictionary(nested));
+    let reading = sample(&properties);
+    assert_eq!(reading.remaining_wh, Some(36.0));
+    assert_eq!(reading.batteries[0].full_charged_wh, Some(60.0));
+    assert_eq!(reading.batteries[0].designed_capacity, 66000);
+    assert_eq!(macos::percent(&properties), Some(60.0));
+    properties.insert(
+        "AppleRawCurrentCapacity".into(),
+        Value::Integer(6000.into()),
+    );
+    assert_eq!(macos::charge_energy_mwh(&properties), (None, Some(60000)));
+    properties.insert("AppleRawCurrentCapacity".into(), Value::Integer(0.into()));
+    assert_eq!(
+        macos::charge_energy_mwh(&properties),
+        (Some(0), Some(60000))
+    );
+    properties.remove("Voltage");
+    assert_eq!(macos::charge_energy_mwh(&properties), (None, None));
     assert_eq!(macos::design_capacity_mwh(&properties), None);
 }
 
@@ -148,16 +181,23 @@ fn binary_fixture_flow_and_no_battery() {
             .output()
             .unwrap()
     };
-    Value::Array(vec![Value::Dictionary(battery(-1000, false))])
+    let mut properties = battery(-1000, false);
+    properties.insert(
+        "AppleRawCurrentCapacity".into(),
+        Value::Integer(3000.into()),
+    );
+    properties.insert("AppleRawMaxCapacity".into(), Value::Integer(5000.into()));
+    Value::Array(vec![Value::Dictionary(properties)])
         .to_file_xml(&fixture)
         .unwrap();
     let output = run(&["--json"]);
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["watts"], -12.0);
-    assert_eq!(value["pct"], 75.0);
+    assert_eq!(value["pct"], 60.0);
     assert_eq!(value["source"], macos::SOURCE);
-    assert!(value["remaining_wh"].is_null());
+    assert_eq!(value["remaining_wh"], 36.0);
+    assert_eq!(value["batteries"][0]["full_charged_wh"], 60.0);
     Value::Array(vec![]).to_file_xml(&fixture).unwrap();
     let output = run(&["--json", "--require-battery"]);
     assert_eq!(output.status.code(), Some(3));

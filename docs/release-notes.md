@@ -1,3 +1,11 @@
+# Version 0.1.7-b - experimental macOS capacity estimates
+
+- Estimate remaining and full Wh from AppleRaw charge fields and battery voltage;
+  look for design capacity in BatteryData as well as the top-level dictionary.
+- Prefer design voltage when available; live voltage is an approximation, not
+  nominal voltage or measured energy. Hardware and units remain unvalidated.
+- Retain the experimental SMC battery-flow path and explicit export behavior.
+
 # Version 0.1.7-a - experimental macOS SMC battery flow
 
 - Try read-only AppleSMC battery voltage and current with ASB fallback and

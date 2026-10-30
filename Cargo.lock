@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "wpm-cli"
-version = "0.1.7-a"
+version = "0.1.7-b"
 dependencies = [
  "chrono",
  "clap",
