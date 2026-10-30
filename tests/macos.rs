@@ -40,6 +40,27 @@ fn signed_flow_and_capacity_units() {
 }
 
 #[test]
+fn experimental_design_capacity_requires_plausible_charge_and_nominal_voltage() {
+    let mut properties = battery(-1000, false);
+    properties.insert("DesignCapacity".into(), Value::Integer(5000.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), None);
+    properties.insert("DesignVoltage".into(), Value::Integer(12000.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), Some(60000));
+    assert_eq!(
+        macos::parse_member(&properties)
+            .unwrap()
+            .unwrap()
+            .designed_capacity,
+        60000
+    );
+    properties.insert("DesignCapacity".into(), Value::Integer(100.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), None);
+    properties.insert("DesignCapacity".into(), Value::Integer(5000.into()));
+    properties.insert("DesignVoltage".into(), Value::Integer(0.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), None);
+}
+
+#[test]
 fn wrapped_current_and_instantaneous_precedence() {
     for wrapped in [u64::from(u32::MAX) - 999, u64::MAX - 999] {
         let mut properties = battery(1000, false);

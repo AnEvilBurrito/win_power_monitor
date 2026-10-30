@@ -37,11 +37,28 @@ MacBook battery telemetry. Running the resulting executable still requires macOS
 
 ## Runtime behavior
 
-The provider invokes `/usr/sbin/ioreg` three times per collection. No sudo,
-service, private entitlement, SMC access, or powermetrics is needed. Start with
+The provider invokes `/usr/sbin/ioreg` three times per collection. The experimental
+refresh path uses a private API and may be denied without administrator access;
+WPM falls back to ordinary reads. No service, SMC access, or powermetrics is needed. Start with
 the default five-second interval; subprocess overhead has not been benchmarked.
 Config uses `$XDG_CONFIG_HOME/wpm/config.toml`, else `~/.config/wpm/config.toml`.
 Use `--config` or `WPM_CONFIG` to override. Tray defaults to false.
+
+## Experimental refresh and capacity test
+
+Run WPM normally, without sudo, for several minutes on battery, including a short
+period of heavier activity. Take a screenshot and share it with the separate
+`~/wpm-macos-diagnostic-<timestamp>.json` file created for the run. Inspect the
+file before sharing. It contains only selected readings and capacity fields,
+not the full battery plist or serial numbers. The diagnostic retains at most
+720 samples. Fixture runs do not create this file or request live refreshes.
+
+The experiment alternates twelve-collection baseline and refresh blocks. A
+successful request return or notification does not prove that the driver
+performed an update or that hardware produced a fresh measurement. Design
+capacity is experimental: where plausible DesignCapacity and DesignVoltage
+are present, WPM assumes mAh and mV respectively and estimates Wh; these
+assumptions need hardware validation. Values remain unavailable otherwise.
 
 ## Check real readings
 

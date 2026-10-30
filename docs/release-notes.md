@@ -1,3 +1,12 @@
+# Version 0.1.7 - experimental macOS battery refresh
+
+- Experiment with private battery refresh requests, alternating baseline and
+  refresh blocks; ordinary battery reads remain the fallback.
+- Estimate design capacity when candidate charge and nominal voltage fields are
+  available, and write a separate allowlisted diagnostic JSON for tester review.
+- macOS refresh behavior, permissions, field units, and capacity estimates are
+  not yet validated on real hardware. No system or wall-power substitution.
+
 # Version 0.1.6 - multi-battery transition hotfix
 
 - Fix false multi-battery `TRANSITION` readings when packs switch between idle

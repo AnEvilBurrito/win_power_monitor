@@ -36,6 +36,17 @@ pub fn percent(properties: &Dictionary) -> Option<f64> {
         .or_else(|| ratio("CurrentCapacity", "MaxCapacity"))
 }
 
+/// Experimental estimate, only when charge and nominal voltage are plausible.
+/// DesignCapacity is interpreted as mAh and DesignVoltage as mV.
+pub fn design_capacity_mwh(properties: &Dictionary) -> Option<u32> {
+    let capacity = integer(properties, "DesignCapacity")?;
+    let voltage = integer(properties, "DesignVoltage")?;
+    if !(1000..=30000).contains(&capacity) || !(3000..=30000).contains(&voltage) {
+        return None;
+    }
+    u32::try_from(capacity.checked_mul(voltage)? / 1000).ok()
+}
+
 pub fn parse_member(properties: &Dictionary) -> Result<Option<Member>, String> {
     if boolean(properties, "BatteryInstalled") == Some(false) {
         return Ok(None);
@@ -66,7 +77,7 @@ pub fn parse_member(properties: &Dictionary) -> Result<Option<Member>, String> {
         id: format!("ioreg:{identity}"),
         tag: 1,
         full_charged_capacity: u32::MAX,
-        designed_capacity: u32::MAX,
+        designed_capacity: design_capacity_mwh(properties).unwrap_or(u32::MAX),
         default_alert1: u32::MAX,
         default_alert2: u32::MAX,
         critical_bias: u32::MAX,
@@ -105,12 +116,14 @@ pub fn parse_snapshot(bytes: &[u8]) -> Result<Vec<Dictionary>, String> {
 #[derive(Default)]
 pub struct MacosBackend {
     pub percent_hint: Option<f64>,
+    pub capacity_diagnostic: serde_json::Value,
 }
 
 #[cfg(target_os = "macos")]
 impl crate::native_battery::Backend for MacosBackend {
     fn snapshot(&mut self, _: &mut Vec<String>) -> Result<Vec<Member>, String> {
         self.percent_hint = None;
+        self.capacity_diagnostic = serde_json::Value::Null;
         let bytes = if let Some(path) = std::env::var_os("WPM_IOREG_FIXTURE") {
             std::fs::read(path).map_err(|error| format!("macos_fixture: {error}"))?
         } else {
@@ -129,6 +142,16 @@ impl crate::native_battery::Backend for MacosBackend {
         for battery in properties {
             if let Some(member) = parse_member(&battery)? {
                 hint = percent(&battery);
+                self.capacity_diagnostic = serde_json::json!({
+                    "DesignCapacity": integer(&battery, "DesignCapacity"),
+                    "DesignVoltage": integer(&battery, "DesignVoltage"),
+                    "AppleRawMaxCapacity": integer(&battery, "AppleRawMaxCapacity"),
+                    "InstantAmperage": integer(&battery, "InstantAmperage"),
+                    "Amperage": integer(&battery, "Amperage"),
+                    "Voltage": integer(&battery, "Voltage"),
+                    "assumed_units": {"DesignCapacity": "mAh", "DesignVoltage": "mV"},
+                    "estimated_design_mwh": design_capacity_mwh(&battery)
+                });
                 members.push(member);
             }
         }

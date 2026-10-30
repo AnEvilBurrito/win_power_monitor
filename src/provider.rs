@@ -191,6 +191,8 @@ pub struct Provider {
     backend: crate::macos::MacosBackend,
     collector: crate::native_battery::Collector,
     system_meter: Option<String>,
+    experiment_tick: u64,
+    experiment_log: crate::macos_diagnostics::DiagnosticLog,
 }
 
 #[cfg(target_os = "macos")]
@@ -208,6 +210,12 @@ impl Provider {
 
     pub fn sample(&mut self, elapsed: f64) -> Sample {
         let mut sample = Sample::empty(elapsed);
+        let fixture = std::env::var_os("WPM_IOREG_FIXTURE").is_some();
+        let refresh = (!fixture).then(|| {
+            let enabled = (self.experiment_tick / 12) % 2 == 1;
+            self.experiment_tick = self.experiment_tick.saturating_add(1);
+            crate::macos_refresh::collect(enabled)
+        });
         self.collector.collect(&mut self.backend, &mut sample);
         sample.source = crate::macos::SOURCE.into();
         if sample.battery_count == 0 && !sample.transition {
@@ -216,13 +224,17 @@ impl Provider {
         } else if sample.battery_count == 1 && !sample.transition {
             sample.pct = self.backend.percent_hint;
         }
-        sample.diagnostics.push(
-            "macos: experimental IORegistry battery flow; energy capacity unavailable".into(),
-        );
+        sample
+            .diagnostics
+            .push("macos: experimental IORegistry battery flow and capacity".into());
         if let Some(name) = &self.system_meter {
             sample.diagnostics.push(format!(
                 "--system-meter {name}: unsupported on macOS; battery flow only"
             ));
+        }
+        if let Some(refresh) = &refresh {
+            self.experiment_log
+                .record(&sample, refresh, &self.backend.capacity_diagnostic);
         }
         sample
     }
