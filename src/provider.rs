@@ -191,8 +191,6 @@ pub struct Provider {
     backend: crate::macos::MacosBackend,
     collector: crate::native_battery::Collector,
     system_meter: Option<String>,
-    experiment_tick: u64,
-    experiment_log: crate::macos_diagnostics::DiagnosticLog,
 }
 
 #[cfg(target_os = "macos")]
@@ -211,11 +209,6 @@ impl Provider {
     pub fn sample(&mut self, elapsed: f64) -> Sample {
         let mut sample = Sample::empty(elapsed);
         let fixture = std::env::var_os("WPM_IOREG_FIXTURE").is_some();
-        let refresh = (!fixture).then(|| {
-            let enabled = (self.experiment_tick / 12) % 2 == 1;
-            self.experiment_tick = self.experiment_tick.saturating_add(1);
-            crate::macos_refresh::collect(enabled)
-        });
         self.collector.collect(&mut self.backend, &mut sample);
         sample.source = crate::macos::SOURCE.into();
         if sample.battery_count == 0 && !sample.transition {
@@ -232,9 +225,20 @@ impl Provider {
                 "--system-meter {name}: unsupported on macOS; battery flow only"
             ));
         }
-        if let Some(refresh) = &refresh {
-            self.experiment_log
-                .record(&sample, refresh, &self.backend.capacity_diagnostic);
+        if !fixture {
+            match crate::macos_smc::read_battery().and_then(|(mv, ma)| {
+                sample
+                    .diagnostics
+                    .push(format!("macos_smc_reading: mv={mv} ma={ma}"));
+                crate::macos_smc::apply_battery(&mut sample, mv, ma).map_err(str::to_owned)
+            }) {
+                Ok(()) => sample
+                    .diagnostics
+                    .push("macos: experimental SMC battery flow".into()),
+                Err(error) => sample
+                    .diagnostics
+                    .push(format!("macos_smc_fallback: {error}")),
+            }
         }
         sample
     }

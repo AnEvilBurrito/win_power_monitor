@@ -1,5 +1,5 @@
 use plist::{Dictionary, Value};
-use wpm_cli::{macos, model::Sample, native_battery::apply_members};
+use wpm_cli::{macos, macos_smc, model::Sample, native_battery::apply_members};
 
 fn battery(current: i64, charging: bool) -> Dictionary {
     let mut properties = Dictionary::new();
@@ -58,6 +58,34 @@ fn experimental_design_capacity_requires_plausible_charge_and_nominal_voltage() 
     properties.insert("DesignCapacity".into(), Value::Integer(5000.into()));
     properties.insert("DesignVoltage".into(), Value::Integer(0.into()));
     assert_eq!(macos::design_capacity_mwh(&properties), None);
+}
+
+#[test]
+fn smc_battery_decode_and_sign_checked_fallback() {
+    assert_eq!(
+        macos_smc::decode_battery(&12000u16.to_le_bytes(), &(-1000i16).to_le_bytes()),
+        Ok((12000, -1000))
+    );
+    assert!(macos_smc::decode_battery(&[1], &[0, 0]).is_err());
+    assert!(macos_smc::decode_battery(&0u16.to_le_bytes(), &[0, 0]).is_err());
+    let mut discharge = sample(&battery(-900, false));
+    assert_eq!(
+        macos_smc::apply_battery(&mut discharge, 12000, 1000),
+        Err("smc_direction_conflict")
+    );
+    assert_eq!(discharge.watts, Some(-10.8));
+    assert!(macos_smc::apply_battery(&mut discharge, 12000, -1000).is_ok());
+    assert_eq!(discharge.watts, Some(-12.0));
+    assert_eq!(discharge.batteries[0].watts, Some(-12.0));
+    assert_eq!(discharge.source, "native:macos_smc_battery");
+    let mut charging = sample(&battery(1000, true));
+    assert!(macos_smc::apply_battery(&mut charging, 12000, 1000).is_ok());
+    assert_eq!(charging.watts, Some(12.0));
+    charging.transition = true;
+    assert_eq!(
+        macos_smc::apply_battery(&mut charging, 12000, 1000),
+        Err("smc_asb_state_unavailable")
+    );
 }
 
 #[test]

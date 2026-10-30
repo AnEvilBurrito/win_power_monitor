@@ -37,28 +37,33 @@ MacBook battery telemetry. Running the resulting executable still requires macOS
 
 ## Runtime behavior
 
-The provider invokes `/usr/sbin/ioreg` three times per collection. The experimental
-refresh path uses a private API and may be denied without administrator access;
-WPM falls back to ordinary reads. No service, SMC access, or powermetrics is needed. Start with
-the default five-second interval; subprocess overhead has not been benchmarked.
+The provider invokes `/usr/sbin/ioreg` three times per collection and tries
+read-only AppleSMC battery voltage/current keys once per collection. SMC is
+experimental and may be unavailable or require privileges; WPM falls back to
+ASB readings when it fails or disagrees with ASB direction. No sudo, service,
+or powermetrics is required for the fallback. Start with the default five-second
+interval; overhead has not been benchmarked.
 Config uses `$XDG_CONFIG_HOME/wpm/config.toml`, else `~/.config/wpm/config.toml`.
 Use `--config` or `WPM_CONFIG` to override. Tray defaults to false.
 
-## Experimental refresh and capacity test
+## Experimental SMC and capacity test
 
 Run WPM normally, without sudo, for several minutes on battery, including a short
-period of heavier activity. Take a screenshot and share it with the separate
-`~/wpm-macos-diagnostic-<timestamp>.json` file created for the run. Inspect the
-file before sharing. It contains only selected readings and capacity fields,
-not the full battery plist or serial numbers. The diagnostic retains at most
-720 samples. Fixture runs do not create this file or request live refreshes.
+period of heavier activity. Take a screenshot and press `e` to explicitly export
+retained history as CSV and JSON in the starting directory. Inspect the JSON before
+sharing, since exported diagnostics may contain device identifiers. The JSON
+includes the ASB reference or an SMC fallback reason in sample diagnostics.
+Fixture runs do not access the SMC.
 
-The experiment alternates twelve-collection baseline and refresh blocks. A
-successful request return or notification does not prove that the driver
-performed an update or that hardware produced a fresh measurement. Design
-capacity is experimental: where plausible DesignCapacity and DesignVoltage
-are present, WPM assumes mAh and mV respectively and estimates Wh; these
-assumptions need hardware validation. Values remain unavailable otherwise.
+Version 0.1.7 attempted to create a separate diagnostic JSON in the home directory
+automatically. Current development builds no longer create it.
+
+SMC keys `B0AV` and `B0AC` are undocumented and their availability, encoding,
+measurement meaning, and update cadence need real-hardware validation. The
+JSON identifies SMC-backed readings separately from ASB fallback readings.
+Design capacity remains experimental: where plausible DesignCapacity and
+DesignVoltage are present, WPM assumes mAh and mV respectively and estimates
+Wh; these assumptions need validation. Values remain unavailable otherwise.
 
 ## Check real readings
 

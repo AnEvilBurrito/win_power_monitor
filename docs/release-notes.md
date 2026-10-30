@@ -1,3 +1,11 @@
+# Version 0.1.7-a - experimental macOS SMC battery flow
+
+- Try read-only AppleSMC battery voltage and current with ASB fallback and
+  include source observations in the existing user-initiated JSON export.
+- Remove the automatic diagnostic file creation introduced in 0.1.7.
+- Battery SMC access, encoding and cadence remain unvalidated on real Macs;
+  remaining and full battery capacity are still unavailable on macOS.
+
 # Version 0.1.7 - experimental macOS battery refresh
 
 - Experiment with private battery refresh requests, alternating baseline and

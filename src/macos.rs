@@ -116,14 +116,12 @@ pub fn parse_snapshot(bytes: &[u8]) -> Result<Vec<Dictionary>, String> {
 #[derive(Default)]
 pub struct MacosBackend {
     pub percent_hint: Option<f64>,
-    pub capacity_diagnostic: serde_json::Value,
 }
 
 #[cfg(target_os = "macos")]
 impl crate::native_battery::Backend for MacosBackend {
     fn snapshot(&mut self, _: &mut Vec<String>) -> Result<Vec<Member>, String> {
         self.percent_hint = None;
-        self.capacity_diagnostic = serde_json::Value::Null;
         let bytes = if let Some(path) = std::env::var_os("WPM_IOREG_FIXTURE") {
             std::fs::read(path).map_err(|error| format!("macos_fixture: {error}"))?
         } else {
@@ -142,16 +140,6 @@ impl crate::native_battery::Backend for MacosBackend {
         for battery in properties {
             if let Some(member) = parse_member(&battery)? {
                 hint = percent(&battery);
-                self.capacity_diagnostic = serde_json::json!({
-                    "DesignCapacity": integer(&battery, "DesignCapacity"),
-                    "DesignVoltage": integer(&battery, "DesignVoltage"),
-                    "AppleRawMaxCapacity": integer(&battery, "AppleRawMaxCapacity"),
-                    "InstantAmperage": integer(&battery, "InstantAmperage"),
-                    "Amperage": integer(&battery, "Amperage"),
-                    "Voltage": integer(&battery, "Voltage"),
-                    "assumed_units": {"DesignCapacity": "mAh", "DesignVoltage": "mV"},
-                    "estimated_design_mwh": design_capacity_mwh(&battery)
-                });
                 members.push(member);
             }
         }
