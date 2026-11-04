@@ -93,6 +93,85 @@ fn raw_charge_capacity_estimates_and_nested_design() {
     assert_eq!(macos::design_capacity_mwh(&properties), None);
 }
 
+fn nested_capacity_fixture() -> Dictionary {
+    macos::parse_snapshot(include_bytes!("fixtures/macos-nested-capacity.plist"))
+        .unwrap()
+        .remove(0)
+}
+
+#[test]
+fn tester_nested_capacity_reaches_dashboard_and_survives_smc() {
+    let properties = nested_capacity_fixture();
+    let mut reading = sample(&properties);
+    assert!(reading.available);
+    assert_eq!(reading.remaining_wh, Some(75.595));
+    assert_eq!(reading.batteries[0].full_charged_wh, Some(78.145));
+    assert_eq!(reading.batteries[0].designed_capacity, 80862);
+    assert_eq!(macos::percent(&properties), Some(100.0 * 5842.0 / 6039.0));
+    assert_eq!(
+        wpm_cli::ui::capacity_label(Some(&reading), false),
+        "bat 1: 75.6 / 78.1 Wh"
+    );
+    macos_smc::apply_battery(&mut reading, 12940, -510).unwrap();
+    assert_eq!(reading.remaining_wh, Some(75.595));
+    assert_eq!(reading.batteries[0].full_charged_wh, Some(78.145));
+}
+
+#[test]
+fn raw_capacity_dictionaries_are_not_mixed() {
+    let mut properties = nested_capacity_fixture();
+    properties.insert(
+        "AppleRawCurrentCapacity".into(),
+        Value::Integer(3000.into()),
+    );
+    // A partial top-level set must not borrow a nested full-charge value.
+    assert_eq!(macos::charge_energy_mwh(&properties), (Some(38820), None));
+    assert_eq!(macos::percent(&properties), Some(100.0));
+    properties.insert("AppleRawMaxCapacity".into(), Value::Integer(5000.into()));
+    assert_eq!(
+        macos::charge_energy_mwh(&properties),
+        (Some(38820), Some(64700))
+    );
+    assert_eq!(macos::percent(&properties), Some(60.0));
+}
+
+#[test]
+fn nested_capacity_validation_and_normalized_percentage_safety() {
+    for (remaining, full, expected) in [
+        (0, 6039, (Some(0), Some(78145))),
+        (6040, 6039, (None, Some(78145))),
+        (-1, 6039, (None, Some(78145))),
+        (100, 100, (Some(1294), None)),
+        (5842, 30001, (Some(75595), None)),
+    ] {
+        let mut properties = nested_capacity_fixture();
+        let data = properties
+            .get_mut("BatteryData")
+            .unwrap()
+            .as_dictionary_mut()
+            .unwrap();
+        data.insert(
+            "AppleRawCurrentCapacity".into(),
+            Value::Integer(remaining.into()),
+        );
+        data.insert("AppleRawMaxCapacity".into(), Value::Integer(full.into()));
+        assert_eq!(macos::charge_energy_mwh(&properties), expected);
+    }
+    let mut properties = nested_capacity_fixture();
+    let data = properties
+        .get_mut("BatteryData")
+        .unwrap()
+        .as_dictionary_mut()
+        .unwrap();
+    data.remove("AppleRawCurrentCapacity");
+    data.remove("AppleRawMaxCapacity");
+    // Neither the nested nor top-level normalized 100 is charge in mAh.
+    assert_eq!(macos::charge_energy_mwh(&properties), (None, None));
+    assert_eq!(macos::percent(&properties), Some(100.0));
+    properties.insert("Voltage".into(), Value::Integer(0.into()));
+    assert_eq!(macos::design_capacity_mwh(&properties), None);
+}
+
 #[test]
 fn smc_battery_decode_and_sign_checked_fallback() {
     assert_eq!(
@@ -198,6 +277,16 @@ fn binary_fixture_flow_and_no_battery() {
     assert_eq!(value["source"], macos::SOURCE);
     assert_eq!(value["remaining_wh"], 36.0);
     assert_eq!(value["batteries"][0]["full_charged_wh"], 60.0);
+    Value::Array(vec![Value::Dictionary(nested_capacity_fixture())])
+        .to_file_xml(&fixture)
+        .unwrap();
+    let output = run(&["--json"]);
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["remaining_wh"], 75.595);
+    assert_eq!(value["batteries"][0]["full_charged_wh"], 78.145);
+    assert_eq!(value["batteries"][0]["designed_capacity"], 80862);
+    assert!((value["pct"].as_f64().unwrap() - 100.0 * 5842.0 / 6039.0).abs() < 1e-10);
     Value::Array(vec![]).to_file_xml(&fixture).unwrap();
     let output = run(&["--json", "--require-battery"]);
     assert_eq!(output.status.code(), Some(3));

@@ -25,15 +25,35 @@ fn current(properties: &Dictionary) -> Option<i64> {
     (-100_000..=100_000).contains(&signed).then_some(signed)
 }
 
+/// Raw charge fields can live at the top level or inside BatteryData.
+/// Keep a set in one dictionary; never combine readings from different levels.
+/// An explicitly present top-level set retains precedence, including partial sets.
+fn raw_charge_properties(properties: &Dictionary) -> &Dictionary {
+    if properties.contains_key("AppleRawCurrentCapacity")
+        || properties.contains_key("AppleRawMaxCapacity")
+    {
+        properties
+    } else {
+        properties
+            .get("BatteryData")
+            .and_then(Value::as_dictionary)
+            .unwrap_or(properties)
+    }
+}
+
 pub fn percent(properties: &Dictionary) -> Option<f64> {
-    let ratio = |remaining, full| {
-        let remaining = integer(properties, remaining)?;
-        let full = integer(properties, full)?;
+    let ratio = |data, remaining, full| {
+        let remaining = integer(data, remaining)?;
+        let full = integer(data, full)?;
         (full > 0 && remaining >= 0 && remaining <= full)
             .then_some(100.0 * remaining as f64 / full as f64)
     };
-    ratio("AppleRawCurrentCapacity", "AppleRawMaxCapacity")
-        .or_else(|| ratio("CurrentCapacity", "MaxCapacity"))
+    ratio(
+        raw_charge_properties(properties),
+        "AppleRawCurrentCapacity",
+        "AppleRawMaxCapacity",
+    )
+    .or_else(|| ratio(properties, "CurrentCapacity", "MaxCapacity"))
 }
 
 /// Experimental energy approximation: charge in mAh multiplied by voltage in mV.
@@ -69,9 +89,10 @@ pub fn charge_energy_mwh(properties: &Dictionary) -> (Option<u32>, Option<u32>) 
     let Some(voltage) = capacity_voltage(properties) else {
         return (None, None);
     };
-    let remaining = integer(properties, "AppleRawCurrentCapacity");
+    let charge = raw_charge_properties(properties);
+    let remaining = integer(charge, "AppleRawCurrentCapacity");
     let full =
-        integer(properties, "AppleRawMaxCapacity").filter(|value| (1000..=30000).contains(value));
+        integer(charge, "AppleRawMaxCapacity").filter(|value| (1000..=30000).contains(value));
     let remaining = remaining.filter(|value| full.is_none_or(|max| *value <= max));
     (
         remaining.and_then(|value| energy_mwh(value, voltage)),

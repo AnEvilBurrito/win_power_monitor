@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+<dict>
+    <!-- Capacity/voltage/current fields from the tester's report; synthetic identity.
+         Serial numbers and unrelated properties are intentionally excluded. -->
+    <key>IORegistryEntryID</key><integer>123</integer>
+    <key>BatteryInstalled</key><true/>
+    <key>ExternalConnected</key><false/>
+    <key>IsCharging</key><false/>
+    <key>Voltage</key><integer>12940</integer>
+    <key>InstantAmperage</key><integer>18446744073709551269</integer>
+    <key>CurrentCapacity</key><integer>100</integer>
+    <key>MaxCapacity</key><integer>100</integer>
+    <key>BatteryData</key>
+    <dict>
+        <key>CurrentCapacity</key><integer>100</integer>
+        <key>AppleRawCurrentCapacity</key><integer>5842</integer>
+        <key>AppleRawMaxCapacity</key><integer>6039</integer>
+        <key>DesignCapacity</key><integer>6249</integer>
+        <key>NominalChargeCapacity</key><integer>6191</integer>
+    </dict>
+</dict>
+</array>
+</plist>

@@ -1,3 +1,10 @@
+# Version 0.1.7-c - macOS nested capacity fix
+
+- Read AppleRaw charge fields inside BatteryData when absent at the top level;
+  use the same raw set for remaining/full Wh estimates and battery percentage.
+- Add a sanitized regression fixture based on tester-provided values. Wh remains
+  approximate; real-Mac validation of this fix is still pending.
+
 # Version 0.1.7-b - experimental macOS capacity estimates
 
 - Estimate remaining and full Wh from AppleRaw charge fields and battery voltage;

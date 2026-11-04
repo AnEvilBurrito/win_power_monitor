@@ -62,13 +62,27 @@ SMC keys `B0AV` and `B0AC` are undocumented and their availability, encoding,
 measurement meaning, and update cadence need real-hardware validation. The
 JSON identifies SMC-backed readings separately from ASB fallback readings.
 Remaining/full Wh are experimental estimates from AppleRawCurrentCapacity /
-AppleRawMaxCapacity (assumed mAh) and battery voltage (mV). Design Wh uses
+AppleRawMaxCapacity (assumed mAh) and battery voltage (mV). Read the raw fields
+from the top level, or from BatteryData when neither top-level raw field exists;
+never mix the two dictionaries. Percentage prefers that same raw pair, so it can
+differ from macOS's normalized CurrentCapacity / MaxCapacity display. Design Wh uses
 BatteryData.DesignCapacity or the top-level DesignCapacity. For all three,
 WPM uses a plausible DesignVoltage when available, otherwise the live battery
 voltage as an approximation—not a nominal voltage or measured energy. These
 assumptions need hardware validation; missing or implausible fields stay
 unavailable. Normalized CurrentCapacity / MaxCapacity are never interpreted as
 mAh. The existing JSON export contains these estimates.
+
+### Verify the nested-capacity fix on a Mac
+
+Use the next candidate built with this fix, not the unchanged 0.1.7-b release.
+Check that the dashboard's `bat 1: remaining / full Wh` line has values, then
+press `?` to check design capacity and `e` to export JSON. With the reported
+BatteryData raw values 5842 / 6039 mAh, design 6249 mAh, and live voltage
+12940 mV (no design voltage), the fixture produces `75.6 / 78.1 Wh` and design
+`80.9 Wh`. Live values will vary. Raw percentage is about 96.7%, rather than the
+normalized top-level 100%. This is a fixture expectation, not hardware validation.
+Share the screenshot and reviewed JSON; no automatic diagnostic file is created.
 
 ## Check real readings
 
