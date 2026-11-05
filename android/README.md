@@ -102,8 +102,7 @@ See the [implementation specification](specs/initial-implementation.md),
 
 **Deferred:** real-device acceptance/overhead profiling, background auto-resume,
 Rust/JNI shared-core integration, archive/session picker, battery-wear modelling,
-release signing and
-distribution/CI work.
+release signing and distribution.
 
 The Kotlin app runs on ARM64 phones and x86-64 emulators. There is no first-party
 NDK/Rust library, but Compose transitively packages a graphics native library.
@@ -264,6 +263,32 @@ If you start at the repository root, run `Set-Location android` first.
 commands depend on the current directory. ADB commands are optional for IDE users;
 Android Studio handles device installation and launch without adding adb to PATH.
 
+### Automated APK builds
+
+The separate [Android debug APK workflow](../.github/workflows/android.yml) runs
+on pushes/pull requests affecting `android/` or the workflow itself. To build
+manually, open **Actions → Android debug APK → Run workflow** and select a ref.
+Desktop workflows and release-candidate packaging are unchanged.
+
+The job uses Ubuntu 24.04, JDK 21, the checksummed Gradle wrapper, API 36 and Build
+Tools 35.0.0. It validates the wrapper, runs JVM tests/lint, assembles the debug
+APK, checks its signature and 16 KiB ZIP alignment, and writes a SHA-256 checksum.
+Only successful checks permit the APK upload. The run's **Artifacts** section has
+`wpm-android-debug-<commit>-<attempt>` with `app-debug.apk`, its `.sha256` file and
+`output-metadata.json`. Test/lint reports are a separate artifact, including after
+build failures when available. Both artifacts expire after 14 days. After
+extracting the APK artifact, `sha256sum -c app-debug.apk.sha256` verifies it; on
+PowerShell compare `Get-FileHash .\app-debug.apk -Algorithm SHA256` with the file.
+
+These are development artifacts, not published releases or release-signed APKs.
+Fresh CI runners generate debug signing keys; they may differ between CI runs
+and from your local key. Android will refuse an in-place update with a different
+key. **Export important recordings before uninstalling an existing copy**, because
+uninstalling removes its private history/settings. Stable signing is deferred;
+no signing secrets are needed by this workflow. CI does not establish hardware
+accuracy, background endurance or observer overhead. A hosted run still needs to
+be checked after these workflow changes are pushed.
+
 ### Verification status
 
 For `0.7.0-dev` (versionCode 10), using the configured JDK 21 and installed SDK:
@@ -316,7 +341,8 @@ See [the current measurement contract](specs/live-current.md).
 3. Optionally extract/share the Rust model/analytics/export via JNI. Keep desktop
    dependencies out, and retain the Kotlin conformance tests as a porting oracle.
    NDK/cargo-ndk/Android Rust targets are not needed for the current app.
-4. Add CI debug builds and retain wrapper validation, unit/lint/package checks.
+4. Validate the first hosted Android workflow run and keep wrapper, unit/lint,
+   signature/alignment checks and downloadable debug artifacts working.
 5. Choose the permanent application ID, release signing/backup, checksums and
    matching GPLv3 source; separately review distribution/foreground-service policy.
 
