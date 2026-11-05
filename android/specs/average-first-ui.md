@@ -1,0 +1,35 @@
+# Average-first readings and stable UI (historical 0.5.x contract)
+
+The 0.6.0 [live-current contract](live-current.md) supersedes the primary average
+metric, calibration gating and polling choices below. Developer-mode, stable slots
+and the synchronous clock fix remain; current requirements use calibrated NOW
+with 1/2/5s choices and a 2s default.
+
+User request: primary average power/current, visible Calibrating before usable readings, brief 1s sampling during startup calibration, no orange advisory clutter in normal UI, opt-in developer mode, fix text/layout jitter. Preserve background efficiency, retention/history, manual design capacity, landscape and accessibility. No commits/install/uploads. No claim of device jitter root cause without testing.
+
+## Measurement contract / agent A ownership
+
+Own monitoring/CurrentEstimator.kt, CurrentCalibrator.kt, MonitoringService.kt, MonitoringRepository.kt, CsvExporter.kt, model/SessionAnalytics.kt, NEW model/AverageMeasurement.kt, corresponding non-UI tests. Do not edit MonitorModels.kt (parent added MonitorSettings.developerMode:Boolean=false), SettingsStore.kt or UI files. Read measurement-refactor.md for existing invariants, then this superseding contract.
+
+- Keep stored sample.amps/watts/currentSource as instant provenance. Do not relabel instant as average. Add shared pure extension helpers in model/AverageMeasurement.kt: BatterySample.averageAmps:Double? (validated derivedAmps + valid positive derivedWindowMillis), BatterySample.averageWatts:Double? (averageAmps * valid positive volts, finite), BatterySample.forAverageDisplay():BatterySample (copy amps/watts from average helpers, signed flow from average; missing remains null). Average power is explicitly an estimate from counter-derived average current times latest voltage, NOT exact window-integrated V*I. All developers/docs must disclose this limitation. No platform CURRENT_AVERAGE scale assumptions/fallback.
+- UI will use forAverageDisplay() for readout/chart/window stats. SessionSummary for NEW live recordings must use same average metric (inject sample-power selector into SessionAnalytics default preserving legacy tests/API if useful); history provenance and existing stored summaries must not be rewritten. Export append explicit average_current_A / estimated_average_power_W / average_window_ms fields and metadata naming power method; retain existing columns unchanged.
+- Initial average acquisition may use >=15s only if meaningful >=3000uAh net movement. Otherwise wait usual >=60s; never manufacture 0 from a short flat counter. After sufficient time, average is normal trailing ~60s. Test short-window quantisation, reversal/gaps/reset, signs, no NOW fallback.
+- Startup sampling: temporary 1s cadence and 1s minimum spacing during bounded initial average/current-calibration acquisition, max 90s per recording/reset, stop earlier once average is available AND NOW calibration is established (or no usable NOW exists). Then normal user 5/15/30s and 1.5s trigger floor. No new wake lock, no busy loop, no setting mutation; include attempt time in cadence. Explicit reset starts a bounded burst again. Counter evidence durations/three consecutive window policy MUST NOT be weakened merely because more polls exist. Pure policy helper + tests.
+- Average current comes directly from counter deltas and does not need NOW unit calibration. Do not gate an independently valid average indefinitely on unrelated NOW calibration; user Calibrating means acquiring the initial usable average. NOW unit/polarity progress is developer detail. UI must not imply independent laboratory accuracy.
+- Notification must show averaged power/current or Calibrating/Unavailable, never unconfirmed instant. Ordinary notification permission advisory must not occupy repository.state.error used for real recording failures; route advisory to dev UI if needed. Preserve real data-loss/service failures and retry guards.
+- Inspect/reset estimator/calibrator evidence on read failures/discontinuities, reset races, sample policy cap. Preserve established calibration on transient failure. Avoid per-poll debug logging. No Gradle runs until parent integrates.
+
+## UI/settings / agent B ownership
+
+Own ui/**, UI tests, monitoring/SettingsStore.kt (+ its tests). No other model/monitoring files, MainActivity or build/docs edits. Parent added MonitorSettings.developerMode=false. Use model helpers agent A will add above, import them. They may not exist yet.
+
+- Main dashboard/chart/window stats use averaged samples consistently and say Average power / Average current (rolling average, not session-to-date). forAverageDisplay() supplies raw copy as agreed; never double-convert, keep raw state available for dev diagnostics/export. Window summary computes over average display samples; live session summary backend will be changed by A.
+- Explicit stable-size Calibrating state before first usable average; no numeric power/current/trace/stats masquerading as measured during warm-up. Brief instruction 'Collecting battery readings' with no fake percentage/countdown. Stopped/stale/unsupported distinctions; missing counter -> Average unavailable, not endless calibration. Existing saved NOW calibration does not skip acquisition of a new session's average. Calibration reset dialog/feedback stays functional and doesn't imply wiping capacity.
+- Developer mode opt-in toggle in Settings (off by default, persisted in SettingsStore). Put raw/instant telemetry, NOW scale/polarity overrides, technical cadence/wake-lock details and verbose diagnostic advisories in a clearly separate developer section only when enabled. Design capacity, capacity/health information, basic battery info remain normal user options. Retain advanced overrides in storage when hiding dev mode.
+- Remove screenshot's orange notifications-disabled notice from normal dashboard. Ordinary charging/discharging is muted/normal colored, not warning orange. Preserve clear actionable real recording/data loss failures; do not globally suppress state.error. No per-refresh warning/age prose/layout reflow.
+- Investigate jitter structurally: stable numeric slots, tabular/monospace digits, fixed/min widths for power number/unit/battery % so 2.21->10.00 and age changes do not push neighbours; stable line heights/baselines; reserve status/readout footprints across Calibrating/live/missing/stale. Avoid refreshing numeric unit at every small threshold crossing if possible, retain magnitude-aware units. No animations/blinking. Preserve true chart-first landscape with 48dp controls, large font and scroll fallback. Add pure layout/presentation tests where possible; report device-only gap honestly.
+- Simplify everyday mode note: no 'no wake lock' developer phrase unless dev mode. Normal recording status + stop affordance remain visible. No Gradle until parent integrates.
+
+## Parent
+
+Review agents, reconcile measurement gating/history/averages, test and lint/assemble, APK signature/alignment, update documentation/version. Device checks remain pending for actual jitter and calibration OEM behavior.

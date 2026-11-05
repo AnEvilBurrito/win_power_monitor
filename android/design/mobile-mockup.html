@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>WPM / Android UI study</title>
+  <link rel="stylesheet" href="mobile-mockup.css">
+  <script src="mobile-mockup.js" defer></script>
+</head>
+<body data-theme="storm" data-orientation="landscape">
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 4v16h18M6 15l4-6 4 3 6-7"/></symbol>
+      <symbol id="i-session" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 9h6M9 13h6M9 17h4"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+      <symbol id="i-freeze" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 14v6h14v-6"/></symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4M6 10v4M10 10v4M14 10v4"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="review-header">
+    <a class="wordmark" href="README.md">wpm<span>/ android</span></a>
+    <span class="review-label">UI STUDY 01 <span aria-hidden="true">/</span> NOT A WORKING APP</span>
+  </header>
+
+  <main class="review-layout">
+    <section class="design-intro" aria-labelledby="review-title">
+      <p class="eyebrow">THE POCKET INSTRUMENT</p>
+      <h1 id="review-title">Familiar at a glance.<br>Quiet in the background.</h1>
+      <p class="intro-copy">The terminal's watts, single chart, and honest diagnostics. Adapted for portrait or landscape, with recording independent of the screen.</p>
+      <div class="review-controls">
+        <label for="orientation-select">Phone orientation</label>
+        <select id="orientation-select">
+          <option value="landscape" selected>Landscape · horizontal</option>
+          <option value="portrait">Portrait · vertical</option>
+        </select>
+        <label for="theme-select">Terminal palette</label>
+        <select id="theme-select">
+          <option value="storm">Tokyo Night Storm</option>
+          <option value="mocha">Catppuccin Mocha</option>
+          <option value="latte">Catppuccin Latte · light</option>
+          <option value="mono">Monochrome</option>
+        </select>
+        <label for="scenario-select">Preview a reading state</label>
+        <select id="scenario-select">
+          <option value="discharge">Discharging · fresh data</option>
+          <option value="charge">Charging</option>
+          <option value="low">Low battery · 18%</option>
+          <option value="stale">No recent sample</option>
+          <option value="unsupported">Current unavailable</option>
+        </select>
+      </div>
+      <p class="try-note">Try both orientations, the absolute scale switch, navigation, monitoring settings, and stop controls. Every reading is synthetic; nothing is being monitored.</p>
+      <a class="rationale-link" href="README.md">Read the design decisions <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section class="device-column" aria-label="Interactive Android design preview">
+      <div class="device instrument">
+        <div class="system-bar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>▴ ▴ ▰</span></div>
+        <header class="app-header">
+          <div class="app-brand"><span class="app-wordmark">wpm<span class="prompt">_</span></span><span class="app-subtitle">BATTERY FLOW</span><div id="landscape-status-slot" hidden></div></div>
+          <div class="landscape-live-strip" id="landscape-live-strip" hidden>
+            <div id="landscape-reading-slot"></div>
+            <div id="landscape-flow-slot"></div>
+            <div id="landscape-stats-slot"></div>
+          </div>
+          <button class="icon-button" id="settings-button" aria-label="Monitoring settings" title="Monitoring settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+        </header>
+
+        <div class="app-scroll" id="app-scroll">
+          <section class="screen" id="screen-monitor" aria-labelledby="tab-monitor">
+            <div class="monitor-summary">
+            <div class="status-line"><span id="recording-status">● Recording</span><span id="sample-age">Sample · 2s ago</span></div>
+            <div class="reading-block">
+              <div class="power-reading"><span id="watts">4.80</span><span class="unit">W</span></div>
+              <div class="battery-reading"><span id="percentage">68<span class="small-unit">%</span></span><span id="battery-caption">battery</span></div>
+            </div>
+            <div class="flow-line"><span id="flow-direction" class="discharge">↓ Discharging</span><span id="electrical">4.02 V <span class="separator">/</span> 1.194 A</span></div>
+            <p class="sample-message" id="sample-message" hidden></p>
+            </div>
+
+            <section class="chart-section" aria-label="Power history">
+              <div class="section-heading"><h2>Power history <span class="subtle">/ W</span></h2><button class="scale-toggle" id="scale-toggle" role="switch" aria-checked="true" aria-label="Absolute scale"><span>Absolute scale</span><span class="switch-track" aria-hidden="true"></span></button></div>
+              <div class="chart-toolbar">
+                <div class="range-controls" role="group" aria-label="Chart time window">
+                  <button data-range="5" aria-pressed="false">5m</button>
+                  <button data-range="30" aria-pressed="true">30m</button>
+                  <button data-range="120" aria-pressed="false">2h</button>
+                </div>
+                <button class="freeze-button" id="freeze-button" aria-pressed="false"><svg class="icon small"><use href="#i-freeze"/></svg><span>Freeze view</span></button>
+              </div>
+              <div class="chart-caption" id="chart-caption">Last 30 minutes</div>
+              <svg class="power-chart" id="power-chart" viewBox="0 0 336 180" role="img" aria-labelledby="chart-title chart-description">
+                <title id="chart-title">Battery-flow history</title>
+                <desc id="chart-description">Power magnitudes over thirty minutes. A two-minute thirty-second sleep gap is left blank, not connected or counted as zero.</desc>
+                <g class="chart-grid"><path id="chart-grid-lines" d="M30 24H326M30 88H326M30 152H326"/></g>
+                <path id="chart-zero" class="chart-zero" d="M30 152H326"/>
+                <g class="chart-labels"><text x="2" y="28" id="axis-top">8</text><text x="2" y="92" id="axis-middle">4</text><text x="2" y="156" id="axis-bottom">0</text></g>
+                <g id="chart-data"></g>
+                <g class="chart-labels"><text x="30" y="176" id="chart-start">09:11</text><text x="326" y="176" text-anchor="end" id="chart-end">09:41</text></g>
+              </svg>
+              <div class="chart-key"><span><i class="trace-swatch"></i>Battery flow</span><span id="gap-key">Blank region = no samples</span></div>
+            </section>
+
+            <div class="monitor-details">
+            <section class="window-stats" aria-label="Statistics for selected chart window">
+              <div><span>Window avg</span><strong id="window-average">4.20 <small>W</small></strong></div>
+              <div><span>Min</span><strong id="window-min">2.20 <small>W</small></strong></div>
+              <div><span>Max</span><strong id="window-max">7.80 <small>W</small></strong></div>
+            </section>
+            <button class="session-link" data-open-screen="session"><span>Session <strong>00:41:06</strong></span><span>2.800 Wh out <span aria-hidden="true">↗</span></span></button>
+            <div class="mode-note"><span class="mode-mark" aria-hidden="true">◌</span><p><strong id="mode-summary">Low impact · no wake lock</strong><span id="mode-detail">15s interval while awake. Sleep gaps are marked.</span></p></div>
+            </div>
+          </section>
+
+          <section class="screen landscape-dashboard" id="screen-monitor-landscape" aria-labelledby="tab-monitor" hidden>
+            <div id="landscape-message-slot"></div>
+            <div id="landscape-chart-slot"></div>
+          </section>
+
+          <section class="screen" id="screen-session" aria-labelledby="tab-session" hidden>
+            <p class="eyebrow in-app">LOCAL RECORDING</p>
+            <h2 class="screen-title">This session</h2>
+            <p class="screen-description" id="session-status">Started 09:00 · recording in the background</p>
+            <div class="session-duration mono">00:41:06<span>elapsed time</span></div>
+            <div class="energy-grid"><div><span>Battery out</span><strong>2.800 <small>Wh</small></strong></div><div><span>Battery in</span><strong>0.000 <small>Wh</small></strong></div></div>
+            <div class="coverage-section"><div class="section-heading"><h3>Observed coverage</h3><strong class="mono">94%</strong></div><div class="coverage-track" aria-hidden="true"><span></span></div><p>38m 36s sampled <span class="separator">/</span> 2m 30s missing</p><p class="subtle">Energy totals exclude missing intervals. No interpolation across gaps.</p></div>
+            <dl class="data-list compact"><div><dt id="session-average-label">Average magnitude</dt><dd id="session-average">4.35 W</dd></div><div><dt>Minimum / maximum</dt><dd id="session-extrema">1.20 / 7.80 W</dd></div></dl>
+            <div class="section-heading timeline-heading"><h3>Session events</h3><span class="subtle">Today</span></div>
+            <ol class="timeline"><li><time>09:00</time><div><strong>Recording started</strong><span>Low-impact mode</span></div></li><li><time>09:25</time><div><strong>No samples during sleep</strong><span>Gap · 2m 30s</span></div></li><li><time>09:27</time><div><strong>Sampling resumed</strong><span>History continues without filling the gap</span></div></li></ol>
+            <button class="secondary-action full-width" id="export-button"><svg class="icon small"><use href="#i-export"/></svg>Export CSV</button>
+            <p class="footnote">Includes timestamps, signed power readings, and gaps.</p>
+          </section>
+
+          <section class="screen" id="screen-diagnostics" aria-labelledby="tab-diagnostics" hidden>
+            <p class="eyebrow in-app">BATTERY INFORMATION</p>
+            <h2 class="screen-title">Diagnostics</h2>
+            <p class="screen-description">Readings and battery information reported by your device.</p>
+            <h3 class="list-heading">Source &amp; freshness</h3>
+            <dl class="data-list"><div><dt>Provider</dt><dd>BatteryManager</dd></div><div><dt>Scope</dt><dd>Net battery flow</dd></div><div><dt>Last successful poll</dt><dd id="diagnostic-age">2s</dd></div><div><dt>Current</dt><dd id="diagnostic-current">−1,194,000 µA</dd></div><div><dt>Voltage</dt><dd id="diagnostic-voltage">4,020 mV</dd></div><div><dt>Temperature</dt><dd id="diagnostic-temperature">31.2 °C</dd></div></dl>
+            <h3 class="list-heading">Battery information</h3>
+            <dl class="data-list"><div><dt>Reported condition</dt><dd id="diagnostic-condition">Good</dd></div><div><dt>Design / full capacity</dt><dd>Not exposed</dd></div><div><dt>Retained-capacity health</dt><dd>Unavailable</dd></div><div><dt>Runtime estimate</dt><dd>Unavailable</dd></div></dl>
+            <p class="inline-note">Android's “Good” condition is not a measured battery-health percentage. Availability varies by device.</p>
+            <h3 class="list-heading">Monitor footprint</h3>
+            <dl class="data-list"><div><dt>CPU wake lock</dt><dd id="diagnostic-wakelock">Not held</dd></div><div><dt>Sampling interval</dt><dd id="diagnostic-cadence">15s while awake</dd></div><div><dt>Own power overhead</dt><dd>Not measured</dd></div></dl>
+            <p class="footnote">Power is derived from reported current × voltage. It is not charger input, wall consumption, or a per-app power measurement.</p>
+          </section>
+        </div>
+
+        <div class="landscape-context" id="landscape-context" hidden>
+          <div id="landscape-session-slot"></div>
+          <div id="landscape-mode-slot"></div>
+        </div>
+        <div class="recording-controls"><button class="record-button" id="record-button"><svg class="icon small"><use href="#i-stop"/></svg><span>Stop recording</span></button><p id="recording-hint">Keeps recording when you leave the app</p></div>
+        <nav class="bottom-nav" aria-label="Main screens">
+          <button id="tab-monitor" data-screen="monitor" aria-current="page"><svg class="icon"><use href="#i-chart"/></svg><span>Monitor</span></button>
+          <button id="tab-session" data-screen="session"><svg class="icon"><use href="#i-session"/></svg><span>Session</span></button>
+          <button id="tab-diagnostics" data-screen="diagnostics"><svg class="icon"><use href="#i-info"/></svg><span>Diagnostics</span></button>
+        </nav>
+        <div class="gesture-bar" aria-hidden="true"><span></span></div>
+      </div>
+      <p class="device-caption" id="device-caption">Landscape concept · synthetic data · scroll sideways on narrow screens</p>
+    </section>
+
+    <aside class="design-notes" aria-label="Design rationale and notification preview">
+      <div class="note-item"><span class="note-number">01</span><h2>Familiar, not miniaturized.</h2><p>Neutral numbers, monospace readings, one cool trace. Terminal palettes without terminal-sized touch targets.</p></div>
+      <div class="note-item"><span class="note-number">02</span><h2>The service is the product.</h2><p>Leave the screen, keep the session. A persistent notification makes recording visible and stoppable.</p></div>
+      <p class="eyebrow notification-label">BACKGROUND / NOTIFICATION CONCEPT</p>
+      <div class="notification instrument">
+        <div class="notification-brand"><span class="mini-logo">w</span><span>WPM · <span id="notification-state">Recording</span></span><span>09:41</span></div>
+        <strong id="notification-title">Low-impact monitoring</strong><p id="notification-reading">Last sample 09:41 · 4.80 W ↓ discharge</p>
+        <div class="notification-actions"><button id="notification-open">Open</button><button id="notification-stop">Stop recording</button></div>
+      </div>
+      <p class="notification-disclaimer">Illustrative only. Android controls the actual notification layout. Values carry a timestamp, not a promise of constant refresh.</p>
+      <div class="note-item"><span class="note-number">03</span><h2>Don't measure away the idle.</h2><p>No always-on animation or wake lock by default. Missing intervals stay missing. Overhead claims wait for hardware measurements.</p></div>
+      <details class="review-questions"><summary>What to assess</summary><ul><li>Is watts → chart → session the right hierarchy?</li><li>Are the three navigation destinations enough?</li><li>Is the background mode clear without explanation?</li><li>Does it still feel like WPM?</li></ul></details>
+    </aside>
+  </main>
+  <footer class="review-footer"><span>Design only. No Android application code changed.</span><a href="README.md">Design brief</a></footer>
+  <p id="preview-feedback" class="preview-feedback" role="status" aria-live="polite"></p>
+
+  <dialog id="settings-dialog" class="sheet instrument" aria-labelledby="settings-title">
+    <div class="sheet-heading"><div><p class="eyebrow in-app">RECORDING OPTIONS</p><h2 id="settings-title">Monitoring settings</h2></div><button class="icon-button" data-close-dialog="settings-dialog" aria-label="Close settings"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <p class="screen-description">Recording continues when you close this screen.</p>
+    <label class="display-option" for="absolute-setting"><input type="checkbox" id="absolute-setting" role="switch" checked><span><strong>Absolute scale</strong><small>Show power and current as positive values. Turn off for negative discharge and positive charge.</small></span></label>
+    <fieldset class="mode-options"><legend>Recording mode</legend>
+      <label class="mode-option"><input type="radio" name="policy" value="low" checked><span><strong>Low impact <span class="recommended">default</span></strong><small>Let your phone sleep between readings. Missing intervals are marked in history.</small></span></label>
+      <label class="mode-option"><input type="radio" name="policy" value="high"><span><strong>High-resolution session</strong><small>Keep the processor awake with the screen off. Uses more battery and may increase the idle drain being measured.</small></span></label>
+    </fieldset>
+    <label class="field-label" for="cadence-select">Sampling interval</label><select id="cadence-select"><option value="5">Every 5 seconds</option><option value="15" selected>Every 15 seconds</option><option value="30">Every 30 seconds</option></select>
+    <p class="footnote">Shorter intervals use more battery. Android may delay readings while your phone sleeps.</p>
+    <p class="inline-note">History stays on this device. Export a copy to keep or share it.</p>
+    <button class="secondary-action full-width" data-close-dialog="settings-dialog">Done</button>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="confirm-dialog instrument" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">Stop recording?</h2><p id="confirm-description">The background session ends. Existing history stays available.</p>
+    <div class="confirm-actions"><button class="secondary-action" id="confirm-cancel">Cancel</button><button class="primary-action" id="confirm-accept">Stop recording</button></div>
+  </dialog>
+  <noscript><p class="noscript-note">Enable JavaScript to switch screens, themes, and states. All readings shown here are synthetic.</p></noscript>
+</body>
+</html>

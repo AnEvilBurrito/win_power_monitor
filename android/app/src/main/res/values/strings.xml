@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WPM</string>
+
+    <!-- Foreground service notification -->
+    <string name="notification_channel_name">Monitoring session</string>
+    <string name="notification_channel_description">Shows recording status and a direct stop control while battery monitoring runs.</string>
+    <string name="notification_title_running">Battery monitoring is on</string>
+    <string name="notification_title_stopping">Stopping monitoring</string>
+    <string name="notification_text_waiting">Waiting for the first battery reading…</string>
+    <string name="notification_action_stop">Stop</string>
+    <string name="percent_format">%1$d%%</string>
+    <string name="notification_power_unavailable">Power unavailable</string>
+    <string name="notification_level_unavailable">Level unavailable</string>
+    <!-- Live-notification: calibrated instantaneous reading, or an explicit state. -->
+    <string name="notification_live_calibrating">Calibrating</string>
+    <string name="notification_live_unavailable">Current unavailable</string>
+    <!-- Five-poll startup: name the arriving reading count, then label the estimate. -->
+    <string name="notification_live_checking">Checking reading %1$d/5</string>
+    <string name="notification_live_estimated">Estimated</string>
+    <string name="notification_live_ambiguous">Current interpretation unclear</string>
+    <string name="notification_text_live_reading">%1$s · %2$s · %3$s</string>
+    <string name="notification_text_live_pending">%1$s · %2$s</string>
+    <string name="monitoring_service_subtype">User-started, user-visible battery power monitoring with a persistent notification and an explicit stop control.</string>
+
+    <!-- Errors surfaced through the monitoring state -->
+    <string name="error_session_interrupted">The previous recording ended early, for example when the app or device restarted. Its saved data is kept and monitoring is stopped.</string>
+    <string name="error_history_unavailable">Saved history could not be updated: %1$s</string>
+    <string name="error_export_failed">The export could not be written: %1$s</string>
+    <string name="error_unsaved_samples_dropped">Storage kept failing, so the oldest unsaved readings were discarded. Saved history is incomplete.</string>
+    <string name="error_sampling_failed">A battery reading failed: %1$s</string>
+    <string name="error_start_failed">Monitoring could not start: %1$s</string>
+    <string name="error_wake_lock">High-resolution monitoring could not hold a partial wake lock: %1$s</string>
+    <string name="error_wake_lock_unsupported">This device does not support a partial wake lock, so high-resolution monitoring runs at the normal cadence.</string>
+    <string name="error_capacity_not_saved">The full-capacity estimate could not be saved: %1$s</string>
+
+    <!-- Recorded gap/caveat reasons -->
+    <string name="reason_sampling_gap">Sampling paused, then resumed.</string>
+    <string name="reason_interval_changed">The sampling interval changed.</string>
+    <string name="reason_mode_changed">The monitoring mode changed.</string>
+    <string name="reason_inconsistent_polarity">The reported current sign conflicts with the reported power state, so power is unavailable for this reading.</string>
+    <string name="reason_current_calibration_changed">The current scale or sign interpretation changed, so readings before and after this sample are not directly comparable.</string>
+
+    <!-- Battery condition reported by Android, not retained-capacity health -->
+    <string name="condition_good">Good</string>
+    <string name="condition_overheat">Overheat</string>
+    <string name="condition_dead">Dead</string>
+    <string name="condition_over_voltage">Over voltage</string>
+    <string name="condition_unspecified_failure">Unspecified failure</string>
+    <string name="condition_cold">Cold</string>
+    <string name="condition_unknown">Unknown</string>
+</resources>
