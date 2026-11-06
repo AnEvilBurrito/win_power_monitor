@@ -674,8 +674,9 @@ class SdkTests(unittest.TestCase):
         self.assertIn("--sdk", str(context.exception))
 
     def test_bat_tool_uses_command_processor(self):
+        tool = Path("C:/sdk dir/apksigner.bat")
         command = verifier._tool_command(
-            Path("C:/sdk dir/apksigner.bat"),
+            tool,
             ["verify", "--print-certs", "D:/a b/app.apk"],
         )
         self.assertIsInstance(command, str)
@@ -683,7 +684,7 @@ class SdkTests(unittest.TestCase):
         self.assertTrue(command.startswith(comspec), command)
         self.assertIn(' /d /c "', command)
         # Exactly one wrapping quote pair around the space-bearing inner line.
-        self.assertIn('""C:\\sdk dir\\apksigner.bat"', command)
+        self.assertIn(f'""{tool}"', command)
         self.assertIn('"D:/a b/app.apk"', command)
         self.assertTrue(command.endswith('"'), command)
         self.assertEqual(command.count('"'), 6, command)
