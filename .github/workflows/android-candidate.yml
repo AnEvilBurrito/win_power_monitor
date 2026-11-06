@@ -1,0 +1,123 @@
+name: Signed Android release candidate (no publishing)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify unsigned Android source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require trusted dispatch ref
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/master|refs/tags/android-v*) ;;
+            *) echo 'Dispatch only master or an Android release tag'; exit 1 ;;
+          esac
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          validate-wrappers: true
+          cache-read-only: true
+      - name: Install pinned Android SDK components
+        shell: bash
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            'platforms;android-36' 'build-tools;35.0.0'
+      - name: Test release tooling
+        run: python -B -m unittest discover -s scripts/tests
+      - name: Test, lint, build and export locked dependency sources
+        run: pwsh -NoProfile -File scripts/build-android.ps1
+      - name: Package exact committed source and pinned native source
+        run: python scripts/package-android-source.py prepare --commit "$GITHUB_SHA" --output dist/android-input
+      - name: Extract source for independent unsigned release rebuild
+        run: python scripts/package-android-source.py extract --archive dist/android-input/source-input.zip --output dist/android-source-check
+      - name: Rebuild and test the supplied source without signing keys
+        run: pwsh -NoProfile -File dist/android-source-check/scripts/build-android.ps1
+      - name: Verify actual unsigned APKs and bind successful build evidence
+        run: python scripts/android-candidate.py record-build --commit "$GITHUB_SHA" --input dist/android-input --rebuilt dist/android-source-check
+      - name: Retain exact unsigned inputs for protected signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-android-candidate-input-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            dist/android-input/source-input.zip
+            dist/android-input/unsigned.apk
+            dist/android-input/build.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain diagnostics including failed builds
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-android-candidate-reports-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/testReleaseUnitTest/
+            dist/android-source-check/android/app/build/reports/
+            dist/android-source-check/android/app/build/test-results/testReleaseUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+  sign:
+    name: Sign and verify Android publication assets
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: android-release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned signing and verification tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            'platforms;android-36' 'build-tools;35.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wpm-android-candidate-input-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/android-input
+      - name: Sign with permanent key and verify all publication assets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: python scripts/android-candidate.py sign --commit "$GITHUB_SHA" --input dist/android-input --output dist/android-release
+      - name: Retain complete verified publication inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpm-android-release-assets-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            dist/android-release/*.apk
+            dist/android-release/*.apk.sha256
+            dist/android-release/*-source.zip
+            dist/android-release/*-source.zip.sha256
+          if-no-files-found: error
+          retention-days: 14

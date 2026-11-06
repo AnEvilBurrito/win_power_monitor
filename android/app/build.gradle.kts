@@ -10,17 +10,22 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        // Provisional application ID: finalize before publishing a signed release.
+        // Permanent release identity; debug builds use a separate application ID.
         applicationId = "io.github.anevilburrito.wpm"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.7.0-dev"
+        versionCode = 11
+        versionName = "0.7.0-rc.1"
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
-            // Release signing and shrinking will be configured before distribution.
+            // Intentionally unsigned: protected CI signs the verified APK separately.
+            // Public source builds never require the production keystore.
             isMinifyEnabled = false
         }
     }
@@ -54,3 +59,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")
 }
+
+apply(from = rootProject.file("release-dependencies.gradle.kts"))

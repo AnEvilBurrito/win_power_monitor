@@ -1,9 +1,10 @@
 # Android initial implementation
 
 Experimental native Android app for **background-first** battery power monitoring.
-The initial implementation builds a debug APK; it is not a published release.
+Development builds and a separately signed release-candidate pipeline are available.
 Real-device background endurance and energy overhead have not been validated.
-Licensed under the repository's [GPL-3.0-only license](../LICENSE).
+Licensed under the repository's [GPL-3.0-only license](../LICENSE). The
+[third-party notices](licenses/README.md) do not change the application's license.
 
 ## UI/UX design review
 
@@ -102,7 +103,7 @@ See the [implementation specification](specs/initial-implementation.md),
 
 **Deferred:** real-device acceptance/overhead profiling, background auto-resume,
 Rust/JNI shared-core integration, archive/session picker, battery-wear modelling,
-release signing and distribution.
+Play Store distribution and policy review.
 
 The Kotlin app runs on ARM64 phones and x86-64 emulators. There is no first-party
 NDK/Rust library, but Compose transitively packages a graphics native library.
@@ -238,9 +239,10 @@ and enter `:app:assembleDebug :app:lintDebug` (UI wording may vary). These tasks
 use the saved Gradle JDK; they are not commands to paste into PowerShell.
 
 Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk` relative to the
-repository root. Debug signing is automatic. Release signing, a permanent
-application ID, and Play policy review are separate pre-release requirements.
-Treat this APK as an initial development build, not a validated monitoring release.
+repository root. Debug signing is automatic, with application ID
+`io.github.anevilburrito.wpm.debug` and version suffix `-debug`, separate from the
+permanent release ID `io.github.anevilburrito.wpm`. Treat debug APKs as development
+builds, not validated monitoring releases. Play distribution remains separate.
 
 ### Optional terminal workflow
 
@@ -258,10 +260,11 @@ already locating the SDK:
 .\gradlew.bat :app:assembleDebug :app:lintDebug
 ```
 
-If you start at the repository root, run `Set-Location android` first.
-`$env:` assignments themselves work in any directory; relative script and Gradle
-commands depend on the current directory. ADB commands are optional for IDE users;
-Android Studio handles device installation and launch without adding adb to PATH.
+From the repository root, you can instead run
+`pwsh -NoProfile -File scripts/build-android.ps1` to test/lint/build the unsigned
+release variant and export locked dependency sources, without changing the shell
+directory. Set JAVA_HOME to JDK 21 for release verification. ADB commands are
+optional; Android Studio handles development installation and launch.
 
 ### Automated APK builds
 
@@ -284,22 +287,49 @@ These are development artifacts, not published releases or release-signed APKs.
 Fresh CI runners generate debug signing keys; they may differ between CI runs
 and from your local key. Android will refuse an in-place update with a different
 key. **Export important recordings before uninstalling an existing copy**, because
-uninstalling removes its private history/settings. Stable signing is deferred;
-no signing secrets are needed by this workflow. CI does not establish hardware
-accuracy, background endurance or observer overhead. A hosted run still needs to
-be checked after these workflow changes are pushed.
+uninstalling removes its private history/settings. No release signing secrets
+are used by this debug workflow. CI does not establish hardware accuracy,
+background endurance or observer overhead.
+
+### Signed Android release candidates
+
+The manual [signed candidate workflow](../.github/workflows/android-candidate.yml)
+builds and tests the release variant on an immutable master/Android-tag SHA,
+exports all 73 currently resolved runtime dependency sources/POMs/notices, adds
+the pinned graphics-path native C++ source, and rebuilds the extracted source
+without production keys. A separate protected `android-release` job aligns,
+signs and verifies the APK against the approved certificate. Secrets are not
+passed to Gradle and the temporary keystore is deleted before source packaging.
+
+The final `wpm-android-release-assets-<sha>-<attempt>` artifact contains the signed
+APK, matching source ZIP and two SHA-256 sidecars. It expires after 14 days. The
+workflow does **not** tag or publish; the `android-release` skill separately
+verifies the downloaded inventory and creates an approved GitHub pre-release.
+Android tags use `android-v<VERSION>`, independently of desktop versions.
+See [the pipeline contract](specs/release-pipeline.md) for checks and source scope.
+
+The permanent release ID is `io.github.anevilburrito.wpm`. The first transition
+from an older unsuffixed debug-signed installation normally requires uninstalling
+that copy: **export important recordings first**. Subsequent official releases
+retain the signer/ID and increase versionCode for in-place updates. The maintainer
+will handle phone testing after the first pre-release; this is not stable-device
+acceptance. No installation, uninstall or data clearing is performed by CI.
 
 ### Verification status
 
-For `0.7.0-dev` (versionCode 10), using the configured JDK 21 and installed SDK:
+Local verification for `0.7.0-rc.1` (versionCode 11), using JDK 21 and the SDK:
 
 ```text
-:app:testDebugUnitTest   481 tests, 0 failures
-:app:lintDebug          0 errors, 17 warnings
-:app:assembleDebug      app/build/outputs/apk/debug/app-debug.apk
+:app:testReleaseUnitTest      481 tests, 0 failures/errors/skips
+:app:lintRelease             0 errors, 17 warnings
+:app:assembleRelease         app/build/outputs/apk/release/app-release-unsigned.apk
+:app:exportReleaseDependencies 73 runtime source/POM/license records
+Python release tooling      220 tests passed
 ```
 
-The universal debug APK is approximately 11 MiB. Native ELF LOAD alignment and
+Hosted source-rebuild/signing evidence is provided by the exact candidate run
+linked in each release, not inferred from these local checks.
+The universal APK is approximately 11 MiB. Native ELF LOAD alignment and
 `zipalign -c -P 16 -v 4` both pass. Lint warnings include the intentionally pinned
 older toolchain/target SDK, Compose modifier style and icon/KTX suggestions; they
 are not hidden by a generated baseline.
@@ -343,8 +373,8 @@ See [the current measurement contract](specs/live-current.md).
    NDK/cargo-ndk/Android Rust targets are not needed for the current app.
 4. Validate the first hosted Android workflow run and keep wrapper, unit/lint,
    signature/alignment checks and downloadable debug artifacts working.
-5. Choose the permanent application ID, release signing/backup, checksums and
-   matching GPLv3 source; separately review distribution/foreground-service policy.
+5. Preserve the permanent ID/signing key and verify signed candidate source,
+   checksums and in-place updates; separately review Play/foreground-service policy.
 
 ## References
 
