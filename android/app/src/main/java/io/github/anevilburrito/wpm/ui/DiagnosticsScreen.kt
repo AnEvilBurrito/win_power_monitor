@@ -154,7 +154,8 @@ internal fun DiagnosticsScreen(scope: DashboardScope, actions: DashboardActions)
         // not collapse the row and move every section below it on a state change.
         WpmDataRow("Estimated runtime", capacity.runtime, valueMinLines = 2)
         Text(
-            text = "Observed capacity is measured over complete charging sessions. The gauge " +
+            text = "Observed capacity is measured over complete charging or discharging " +
+                "windows of at least 20 percentage points. The gauge " +
                 "estimate is a single reading and is never reported as the observed capacity. " +
                 "Design capacity is only what you enter in settings, and it is used only for " +
                 "estimated health.",

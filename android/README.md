@@ -92,14 +92,16 @@ See the [implementation specification](specs/initial-implementation.md),
 
 - Capacity is split into user-entered design capacity (optional, health reference
   only), an immediate single-point gauge estimate, and an observed estimate from
-  completed monotonic charging windows spanning >=60 percentage points. This is
-  an accuracy policy, not a mathematical requirement. No full discharge is needed.
+  completed monotonic charging **or discharging** windows spanning >=20 percentage
+  points (e.g. 20 -> 40 or 80 -> 60). This is an accuracy policy, not a
+  mathematical requirement, and it is an absolute percentage-point span, not 20% of
+  the starting level. Neither a full charge nor a full discharge is needed.
   Estimated health compares observed capacity with the user-supplied design value.
 - Cycle count is shown when Android reports it (API 34+). Runtime uses the recent
   counter average, not instantaneous current; charging time additionally needs an
   observed capacity. Missing inputs stay unavailable.
 - Schema v4 preserves history while clearing only the old capacity aggregate:
-  older estimates cannot honestly be relabelled as observed charging capacity.
+  older estimates cannot honestly be relabelled as observed capacity.
 
 **Deferred:** real-device acceptance/overhead profiling, background auto-resume,
 Rust/JNI shared-core integration, archive/session picker, battery-wear modelling,

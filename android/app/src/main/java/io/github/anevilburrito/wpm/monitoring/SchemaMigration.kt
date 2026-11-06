@@ -23,7 +23,9 @@ internal object SchemaMigration {
     /**
      * Marker stored beside an aggregate. It makes the quantity self-describing, so a
      * row written by the old estimator can never be read back as an observed
-     * capacity even if it were somehow still present.
+     * capacity even if it were somehow still present. Accepting 20-point windows
+     * in either direction changes the evidence policy, not the stored quantity:
+     * earlier 60-point charging observations remain valid under the same marker.
      */
     const val CAPACITY_METHOD = "observed_charge_counter_swing_v1"
 

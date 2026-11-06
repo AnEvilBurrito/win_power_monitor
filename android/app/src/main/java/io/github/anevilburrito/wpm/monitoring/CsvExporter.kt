@@ -77,7 +77,7 @@ object CsvExporter {
     /**
      * Header line describing the accumulated *observed* capacity.
      *
-     * Says `unknown` when no charging window has completed yet, because there is no
+     * Says `unknown` when no charge or discharge window has completed yet, because there is no
      * design-capacity property to fall back on and a zero would be a fabrication.
      * [BASIS] states how the number was obtained; `window_percent` is the progress
      * of the window still open at export time, never a capacity.
@@ -92,7 +92,7 @@ object CsvExporter {
 
     /**
      * How observed capacity is obtained: the charge-counter change across a monotonic
-     * charging window that spanned at least six tenths of the reported gauge range,
+     * charge or discharge window spanning at least 20 percentage points,
      * accumulated as a swing-weighted average. A gauge observation, not a laboratory
      * measurement, and not the single-point gauge helper.
      */

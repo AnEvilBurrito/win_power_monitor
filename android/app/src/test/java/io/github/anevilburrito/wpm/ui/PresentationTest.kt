@@ -2,7 +2,9 @@ package io.github.anevilburrito.wpm.ui
 
 import io.github.anevilburrito.wpm.model.BatterySample
 import io.github.anevilburrito.wpm.model.CurrentSource
+import io.github.anevilburrito.wpm.model.CapacityAggregate
 import io.github.anevilburrito.wpm.model.CapacityEstimate
+import io.github.anevilburrito.wpm.model.CapacityEstimator
 import io.github.anevilburrito.wpm.model.CurrentCalibration
 import io.github.anevilburrito.wpm.model.CurrentPolarityOverride
 import io.github.anevilburrito.wpm.model.CurrentUnitOverride
@@ -606,13 +608,14 @@ class PresentationTest {
             capacitySample(),
         )
         assertEquals("\u2248 4,588 mAh \u00b7 single reading", view.gaugeCapacity)
-        assertEquals("\u2248 4,200 mAh \u00b7 2 charging windows", view.observedCapacity)
+        assertEquals("\u2248 4,200 mAh \u00b7 2 capacity windows", view.observedCapacity)
+        assertFalse(view.observedCapacity.contains("charging"))
         assertFalse(view.observedCapacity.contains("single reading"))
     }
 
     @Test fun observedCapacityPendingAndUnavailableCopyIsTruthful() {
         val pending = capacityView(capacityState(), capacitySample())
-        assertEquals("Not measured yet \u00b7 needs a longer charging session", pending.observedCapacity)
+        assertEquals("Not measured yet \u00b7 needs 20 points of charge or discharge", pending.observedCapacity)
 
         val noCounter = capacityView(capacityState(), capacitySample(chargeCounterMicroampHours = null))
         assertEquals("Not exposed by this device", noCounter.observedCapacity)
@@ -625,12 +628,56 @@ class PresentationTest {
         assertEquals("No reading yet", capacityView(capacityState(), null).gaugeCapacity)
     }
 
-    @Test fun observedCapacityCountsChargingWindowsNotPolls() {
+    @Test fun observedCapacityCountsCapacityWindowsNotPolls() {
         val one = capacityView(
             capacityState(capacity = CapacityEstimate(estimatedMilliampHours = 5_000.0, estimateCount = 1)),
             capacitySample(),
         )
-        assertEquals("\u2248 5,000 mAh \u00b7 1 charging window", one.observedCapacity)
+        assertEquals("\u2248 5,000 mAh \u00b7 1 capacity window", one.observedCapacity)
+    }
+
+    @Test fun observedCapacityPendingCopyAsksForEitherDirectionAndTheTwentyPointSpan() {
+        // The pending explanation must not send the user on a charge-only errand:
+        // a 20-point discharge window measures the same quantity.
+        val duringCharge = capacityView(
+            capacityState(),
+            capacitySample(amps = 0.05, flow = FlowState.CHARGING),
+        ).observedCapacity
+        val duringDischarge = capacityView(capacityState(), capacitySample()).observedCapacity
+        assertEquals("Not measured yet \u00b7 needs 20 points of charge or discharge", duringCharge)
+        assertEquals(duringCharge, duringDischarge)
+        assertTrue(duringDischarge.contains("20"))
+        assertTrue(duringDischarge.contains("charge") && duringDischarge.contains("discharge"))
+        assertFalse(duringDischarge.contains("charging session"))
+    }
+
+    @Test fun estimatedHealthUsesAWindowObservedWhileDischarging() {
+        // Feed a real 80 -> 60 discharge window through the estimator and aggregate
+        // before presenting health. No current calibration or charging is needed.
+        val estimator = CapacityEstimator()
+        var aggregate = CapacityAggregate()
+        val samples = (80 downTo 60).map { percent ->
+            BatterySample(
+                timestampMillis = (80 - percent) * 60_000L,
+                elapsedRealtimeMillis = (80 - percent) * 60_000L,
+                percentage = percent,
+                chargeCounterMicroampHours = percent * 43_800L,
+                plugged = false,
+                flow = FlowState.DISCHARGING,
+            )
+        }
+        samples.forEach { sample ->
+            estimator.add(sample)?.let { aggregate = aggregate.plus(it) }
+        }
+        val view = capacityView(
+            capacityState(capacity = aggregate.toEstimate(lastUpdatedMillis = null)),
+            samples.last(),
+            designCapacityMilliampHours = 4_500.0,
+        )
+        assertEquals("\u2248 4,380 mAh \u00b7 1 capacity window", view.observedCapacity)
+        assertEquals("\u2248 97% of design capacity", view.health)
+        assertFalse(view.observedCapacity.contains("charging"))
+        assertFalse(view.health.contains("charging"))
     }
 
     @Test fun estimatedHealthNeedsBothObservedAndDesign() {

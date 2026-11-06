@@ -4,8 +4,8 @@ package io.github.anevilburrito.wpm.monitoring
  * When the in-memory observed-capacity aggregate must be written to
  * `capacity_state`.
  *
- * Since the estimator only reports a value when a charging window has completed a
- * six-tenths-of-the-gauge swing, an observation is rare by construction: it cannot
+ * Since the estimator only reports a value when a charge or discharge window has
+ * completed a 20-percentage-point swing, an observation is rare by construction: it cannot
  * happen more than once per such window. The throttle therefore no longer exists to
  * suppress per-poll writes; it coalesces a burst (two windows finishing inside the
  * same minute, e.g. a resumed session) and nothing more. `endRecording()` still

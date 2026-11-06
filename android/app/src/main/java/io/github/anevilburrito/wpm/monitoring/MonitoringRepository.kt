@@ -86,7 +86,7 @@ class MonitoringRepository private constructor(context: Context) {
     /**
      * Observed-capacity state.
      *
-     * [capacityEstimator] is stateful: it watches one monotonic charging window at a
+     * [capacityEstimator] is stateful: it watches one monotonic charge or discharge window at a
      * time and reports only when that window spanned
      * [CapacityEstimator.MINIMUM_PERCENT_SPAN] percentage points of the reported
      * gauge, so a recorded poll is *evidence*, not an observation.
@@ -664,10 +664,10 @@ class MonitoringRepository private constructor(context: Context) {
      * Feeds one recorded sample into the observed-capacity estimator.
      *
      * [CapacityEstimator] rejects gaps, missing values and reversals itself and
-     * returns a measurement only once a charging window has completed a
-     * six-tenths-of-the-gauge swing. Everything before that is *progress*: the
+     * returns a measurement only once a charge or discharge window spans at least
+     * 20 percentage points. Everything before that is *progress*: the
      * published state goes through [capacityEstimateLocked] on every recorded sample,
-     * so the UI can honestly say a longer charging session improves accuracy, while
+     * so the UI can explain the required span in either direction, while
      * the durable aggregate only changes when a window completes.
      *
      * Must be called with [mutex] held.
@@ -692,7 +692,7 @@ class MonitoringRepository private constructor(context: Context) {
      *
      * Throttled to once per [CAPACITY_PERSIST_INTERVAL_MILLIS] (plus the stop-time
      * flush) because a completed observation is rare and cannot arrive faster than a
-     * charging window: the throttle only coalesces a burst. A failure keeps the
+     * charge or discharge window: the throttle only coalesces a burst. A failure keeps the
      * in-memory aggregate, leaves it dirty and raises a recoverable notice: the
      * observation is real, only its durability failed, and recording must continue.
      * [retryPendingCapacityLocked] retries it on later polls, so a write that failed

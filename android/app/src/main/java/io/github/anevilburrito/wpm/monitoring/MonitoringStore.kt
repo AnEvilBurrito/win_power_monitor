@@ -558,7 +558,7 @@ internal class MonitoringStore(
         /**
          * Historic name only: since v3 this column stores
          * [CapacityAggregate.weightTotal] (the accumulated percentage-swing weight
-         * of the accepted charging windows). Renaming it would mean a migration for
+         * of the accepted charge/discharge windows). Renaming it would mean a migration for
          * no benefit, so the mapping is documented here instead.
          */
         const val COL_CAPACITY_WEIGHT_PERCENT = "weightPercent"

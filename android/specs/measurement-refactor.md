@@ -4,6 +4,12 @@ Historical contract for 0.4.0-dev. The 0.5.0-dev average-first display, bounded 
 startup sampling and developer-mode changes in [average-first-ui.md](average-first-ui.md)
 supersede its instant-primary/no-faster-poll/UI ownership requirements below.
 
+> **Superseded capacity policy:** the charging-only, 60-percentage-point observed
+> capacity policy below no longer applies. The current contract is
+> **[capacity-windows.md](capacity-windows.md)**: a charging **or discharging** window
+> spanning at least **20 percentage points**. Everything else in this document is kept
+> as the historical record and is not rewritten.
+
 Implement current calibration, distinct capacity concepts, and layout-stable user-facing information. Preserve desktop code and existing recording lifecycle, wake-lock policy, sample batching and retention. No release/commit/upload. Existing Android changes are unverified and must be reviewed, not discarded wholesale.
 
 ## Shared model (parent-owned MonitorModels.kt)

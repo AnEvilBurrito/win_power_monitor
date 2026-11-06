@@ -466,8 +466,9 @@ private fun isInternalToken(reason: String): Boolean =
  *    sysfs node needs root), so it is never inferred.
  *  - [gaugeCapacity]: a single-point gauge estimate (counter / state of charge).
  *    A gauge observation, not a measurement of usable capacity.
- *  - [observedCapacity]: the observed capacity built from complete charging
- *    windows; `estimateCount` counts windows, not polls.
+ *  - [observedCapacity]: the observed capacity built from complete charging **or
+ *    discharging** windows spanning at least 20 percentage points;
+ *    `estimateCount` counts capacity windows, not polls.
  *  - [health]: observed against design, only when both exist. The design capacity
  *    the user types in is used for **health only**.
  *
@@ -521,8 +522,9 @@ private fun designCapacityText(designMilliampHours: Double?): String =
 
 /**
  * Single-point gauge estimate (`counter / state of charge`) for the latest reading.
- * It is a gauge observation, not the observed charging-session capacity, so it is
- * labelled separately and never presented as the measured capacity.
+ * It is a gauge observation, not the observed capacity from a completed charging or
+ * discharging window, so it is labelled separately and never presented as the
+ * measured capacity.
  */
 private fun gaugeCapacityText(latest: BatterySample?): String {
     if (latest == null) return "No reading yet"
@@ -534,8 +536,10 @@ private fun gaugeCapacityText(latest: BatterySample?): String {
 }
 
 /**
- * Capacity observed over complete charging windows (charge-counter change against
- * percentage change). [CapacityEstimate.estimateCount] counts windows, not polls.
+ * Capacity observed over complete charging **or discharging** windows
+ * (charge-counter change against percentage change). Both directions measure the
+ * same quantity, so the copy is direction-neutral. [CapacityEstimate.estimateCount]
+ * counts capacity windows, not polls.
  */
 private fun observedCapacityText(
     capacity: CapacityEstimate,
@@ -547,11 +551,12 @@ private fun observedCapacityText(
         val amount = WpmFormat.milliampHours(estimate)
         val windows = capacity.estimateCount
         if (windows <= 0) return "\u2248 $amount"
-        return "\u2248 $amount \u00b7 $windows ${if (windows == 1) "charging window" else "charging windows"}"
+        return "\u2248 $amount \u00b7 $windows ${if (windows == 1) "capacity window" else "capacity windows"}"
     }
     if (!running) return OBSERVED_NOT_MEASURED
     if (latest?.chargeCounterMicroampHours == null) return COUNTER_NOT_EXPOSED
-    // The policy asks for a long charging window; explain that without a banner.
+    // The policy asks for a 20-point charging or discharging span; explain that
+    // without a banner.
     return OBSERVED_PENDING
 }
 
@@ -794,8 +799,11 @@ private const val CHARGING_NEEDS_OBSERVED = "Charging time unavailable until cap
 /** Devices without a charge counter can never produce a counter-based figure. */
 private const val COUNTER_NOT_EXPOSED = "Not exposed by this device"
 
-/** Observed capacity needs a long charging window; never a flashing progress banner. */
-private const val OBSERVED_PENDING = "Not measured yet \u00b7 needs a longer charging session"
+/**
+ * Observed capacity needs a 20-point charge or discharge span; never a flashing
+ * progress banner and never charging-only wording.
+ */
+private const val OBSERVED_PENDING = "Not measured yet \u00b7 needs 20 points of charge or discharge"
 
 private const val OBSERVED_NOT_MEASURED = "Not measured yet"
 

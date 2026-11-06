@@ -73,8 +73,9 @@ test the Kotlin analytics contract explicitly rather than claiming shared Rust.
   reset/retry and startup progress are also in normal Diagnostics.
 - Capacity concepts stay distinct: optional user-entered design capacity; immediate
   single-point gauge estimate (counter / reported fraction); observed capacity from
-  completed monotonic charging windows spanning >=60 percentage points (accuracy
-  policy, not a mathematical prerequisite). Estimated health requires observed and
+  completed monotonic charging **or discharging** windows spanning >=20 percentage
+  points (an absolute percentage-point span; accuracy policy, not a mathematical
+  prerequisite). Estimated health requires observed and
   design capacity. Neither gauge nor design capacity is persisted as an observation.
   Platform cycle count (API34+) and runtime remain unavailable when inputs are absent.
 - Units are magnitude-aware everywhere: power W/mW/µW, energy Wh/mWh/µWh, current

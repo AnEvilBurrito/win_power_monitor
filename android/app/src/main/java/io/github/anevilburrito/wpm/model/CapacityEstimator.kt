@@ -4,11 +4,11 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Observed full capacity of the installed battery, from completed charging windows.
+ * Observed full capacity of the installed battery, from charging or discharging windows.
  *
  * This app uses no model database or private design-capacity interface, and no
  * independent laboratory coulomb counter. Its observations use the reported gauge:
- * how much the charge counter moved while the reported percentage rose. Over a long
+ * how much the charge counter moved while the reported percentage changed. Over a long
  * enough swing that ratio is a usable capacity, but it is a gauge observation, not
  * an independent measurement, and it is deliberately kept separate from the
  * single-point [CapacityMath.gaugeFullCapacityMilliampHours] helper the UI shows.
@@ -83,41 +83,27 @@ data class CapacityAggregate(
 }
 
 /**
- * Stateful observed-capacity estimator: one charging-session window at a time.
+ * Stateful observed-capacity estimator: one monotonic charge or discharge window.
  *
- * Policy (an accuracy policy, not a mathematical prerequisite: a one-point reading
- * *can* be divided, it is just too coarse to be worth publishing):
+ * Policy (an accuracy policy, not a mathematical prerequisite):
  *
- * 1. A window opens at an anchor sample carrying a reported percentage and a
- *    positive charge counter, taken while the battery is charging or plugged.
- *    A sample that explicitly reports **unplugged** (or **discharging** with an
- *    established current sign) closes the window instead: a rising counter during
- *    discharge is a gauge adjustment, not charge added to the battery, and a session
- *    that ended must not keep feeding a ratio. An *unknown* plug/flow state — and an
- *    uncalibrated "discharging" word, whose sign may be inverted — stays neutral (it
- *    neither opens nor closes anything), because the platform does not always report
- *    either and a missing property must not be confused with "not charging". A
- *    plugged-in reading does **not** need a calibrated instantaneous current: the
- *    counter-vs-percentage window never reads the current's sign.
- * 2. It stays open while the charge counter and the reported percentage are both
- *    non-decreasing — that is a monotonic charging window. Charges, reboots,
- *    counter/pin resets and gauge jitter cannot masquerade as capacity because any
- *    reversal restarts the window.
- * 3. The window is discarded and re-anchored at the current sample when values are
- *    missing, when the sample is flagged as a discontinuity (`gapBefore`), when two
- *    consecutive readings are more than [MAX_WINDOW_GAP_MILLIS] apart (charge that
- *    moved while unobserved is never attributed to a window that did not watch it),
- *    when the elapsed time is non-positive, or when a counter step implies more
- *    than [MAX_PLAUSIBLE_CHARGE_AMPS] (a gauge artefact, not charging).
- * 4. Once the window spans at least [MINIMUM_PERCENT_SPAN] percentage points with a
- *    positive counter change, `capacity = deltaCharge / (deltaPercent / 100)` is
- *    reported, provable nonsense outside
- *    [MIN_PLAUSIBLE_MILLIAMP_HOURS]..[MAX_PLAUSIBLE_MILLIAMP_HOURS] is rejected
- *    instead of clamped, and the window is re-anchored at the endpoint so the next
- *    observation never re-uses charge the previous one already spent.
- * 5. [reset] closes any open window (recording boundary, discontinuity). The
- *    durable aggregate survives it: capacity is a property of the battery, not of
- *    one recording.
+ * 1. Anchor a valid percentage and nonnegative charge counter. Infer direction from
+ *    their movement; an explicit unplugged state allows discharge only, and a
+ *    calibrated current's flow provides a direction hint. Unknown properties and
+ *    uncalibrated instantaneous current stay neutral. A plugged phone may discharge.
+ * 2. Each property may stay flat between updates, but nonzero counter/percentage
+ *    steps must agree with the window's direction. Re-anchor on reversals or
+ *    conflicting trusted direction instead of mixing charge and discharge legs.
+ * 3. Missing values and `gapBefore` clear the window. Non-positive elapsed steps,
+ *    gaps over [MAX_WINDOW_GAP_MILLIS] and implausible counter rates re-anchor it.
+ *    Charge that moved unobserved is never attributed to an observed window.
+ * 4. At [MINIMUM_PERCENT_SPAN] percentage points, report
+ *    `abs(deltaCharge) / (abs(deltaPercent) / 100)`. Reject values outside
+ *    [MIN_PLAUSIBLE_MILLIAMP_HOURS]..[MAX_PLAUSIBLE_MILLIAMP_HOURS], never clamp.
+ *    Re-anchor at the endpoint so subsequent windows do not reuse charge. Weight
+ *    and progress use the absolute percentage-point span in either direction.
+ * 5. [reset] closes the open window; the durable aggregate survives. Earlier
+ *    charging-only observations measure the same quantity and remain valid.
  *
  * Pure Kotlin, no Android imports. Callers may feed it from the sampler thread and
  * reset it from the lifecycle thread, so the small state is guarded by the instance
@@ -132,27 +118,30 @@ class CapacityEstimator(
         val elapsedMillis: Long,
         val chargeCounterMicroampHours: Long,
         val percent: Int,
+        val directionHint: Int,
     )
 
     private var anchor: Point? = null
     private var latest: Point? = null
+    private var direction = 0
 
     /** Closes the open window; no completed observation is lost or altered. */
     @Synchronized
     fun reset() {
         anchor = null
         latest = null
+        direction = 0
     }
 
     /**
      * Percentage points gathered toward [MINIMUM_PERCENT_SPAN] in the open window,
-     * for the "a longer charging session improves accuracy" progress copy.
+     * in the open charging or discharging window.
      */
     @Synchronized
     fun progressPercent(): Int {
         val start = anchor ?: return 0
         val current = latest ?: return 0
-        return (current.percent - start.percent).coerceIn(0, minPercentSpan)
+        return abs(current.percent - start.percent).coerceIn(0, minPercentSpan)
     }
 
     /**
@@ -163,13 +152,6 @@ class CapacityEstimator(
      */
     @Synchronized
     fun add(sample: BatterySample): CapacityMeasurement? {
-        if (!isChargingSample(sample)) {
-            // Explicitly unplugged/discharging: this is not a charging session, so
-            // any counter movement here is a gauge adjustment, never charge added.
-            // An unknown plug/flow state is deliberately neutral (see the class doc).
-            reset()
-            return null
-        }
         val point = pointOf(sample)
         if (point == null || sample.gapBefore) {
             // Missing values or a known discontinuity: nothing about this stretch is
@@ -178,24 +160,25 @@ class CapacityEstimator(
             return null
         }
         val start = anchor
-        if (start == null) {
-            anchor = point
-            latest = point
-            return null
-        }
         val previous = latest
-        if (previous == null) {
-            anchor = point
-            latest = point
+        if (start == null || previous == null) {
+            restart(point)
             return null
         }
         val stepMillis = point.elapsedMillis - previous.elapsedMillis
         val chargeStep = point.chargeCounterMicroampHours - previous.chargeCounterMicroampHours
         val percentStep = point.percent - previous.percent
+        val chargeDirection = chargeStep.compareTo(0L)
+        val percentDirection = percentStep.compareTo(0)
+        val expectedDirection = direction.takeIf { it != 0 }
+            ?: point.directionHint.takeIf { it != 0 }
+            ?: chargeDirection.takeIf { it != 0 }
+            ?: percentDirection
         if (stepMillis <= 0L ||
             stepMillis > maxGapMillis ||
-            chargeStep < 0L ||
-            percentStep < 0 ||
+            (chargeDirection != 0 && chargeDirection != expectedDirection) ||
+            (percentDirection != 0 && percentDirection != expectedDirection) ||
+            (point.directionHint != 0 && point.directionHint != expectedDirection) ||
             // Faster polling can expose a batch of cached gauge movement in a
             // single second; don't interpret its release as a one-second surge.
             impliedAmps(chargeStep, maxOf(stepMillis, STEP_REFERENCE_MILLIS)) > maxPlausibleAmps
@@ -206,10 +189,14 @@ class CapacityEstimator(
             return null
         }
         latest = point
-        val spanPercent = point.percent - start.percent
+        direction = expectedDirection
+        val signedPercentSpan = point.percent - start.percent
+        val spanPercent = abs(signedPercentSpan)
         if (spanPercent < minPercentSpan) return null
-        val chargeMicroampHours = point.chargeCounterMicroampHours - start.chargeCounterMicroampHours
+        val signedChargeChange = point.chargeCounterMicroampHours - start.chargeCounterMicroampHours
+        val chargeMicroampHours = abs(signedChargeChange)
         if (chargeMicroampHours <= 0L ||
+            signedChargeChange.compareTo(0L) != signedPercentSpan.compareTo(0) ||
             impliedAmps(chargeMicroampHours, point.elapsedMillis - start.elapsedMillis) > maxPlausibleAmps
         ) {
             // The percentage moved while the counter did not: the gauge is not
@@ -233,16 +220,17 @@ class CapacityEstimator(
     }
 
     private fun pointOf(sample: BatterySample): Point? {
-        val percent = sample.percentage?.takeIf { it in 1..100 } ?: return null
-        val counter = sample.chargeCounterMicroampHours?.takeIf { it > 0L } ?: return null
+        val percent = sample.percentage?.takeIf { it in 0..100 } ?: return null
+        val counter = sample.chargeCounterMicroampHours?.takeIf { it >= 0L } ?: return null
         return Point(
             elapsedMillis = sample.elapsedRealtimeMillis,
             chargeCounterMicroampHours = counter,
             percent = percent,
+            directionHint = directionHint(sample),
         )
     }
 
-    /** Charge rate implied by one step, in amperes (sign preserved). */
+    /** Magnitude of the charge/discharge rate implied by one step, in amperes. */
     private fun impliedAmps(deltaMicroampHours: Long, deltaMillis: Long): Double {
         if (deltaMillis <= 0L) return Double.POSITIVE_INFINITY
         val amps = deltaMicroampHours * 3600.0 / (deltaMillis / 1000.0) / MICROAMPS_PER_AMP
@@ -250,45 +238,33 @@ class CapacityEstimator(
     }
 
     /**
-     * True unless the sample *explicitly* reports a battery that is not being charged.
-     *
-     * - `plugged == false` is a platform status (`EXTRA_PLUGGED`), not a sign, so it
-     *   is always trustworthy and always closes the window.
-     * - A reported discharge also closes it, but only when the instantaneous current's
-     *   sign is established ([BatterySample.currentCalibrated]). An uncalibrated
-     *   `CURRENT_NOW` can point the wrong way, and then its "discharging" word would
-     *   veto a perfectly valid plugged window forever. The counter rule still applies
-     *   on its own: a genuinely discharging counter step restarts the window.
-     * - `null`/`UNKNOWN` and [FlowState.IDLE] stay neutral: the platform is allowed to
-     *   omit the plug state, and a plugged phone that is merely full still reports a
-     *   rising counter for a while.
+     * Trusted hints reject gauge movement contrary to the battery's known state.
+     * Plugged does not imply charging. Uncalibrated CURRENT_NOW may be inverted,
+     * so it must not veto either direction of counter/percentage observation.
      */
-    private fun isChargingSample(sample: BatterySample): Boolean = when {
-        sample.plugged == false -> false
-        sample.flow == FlowState.DISCHARGING && sample.currentCalibrated -> false
-        else -> true
+    private fun directionHint(sample: BatterySample): Int = when {
+        sample.plugged == false -> -1
+        sample.currentCalibrated && sample.flow == FlowState.CHARGING -> 1
+        sample.currentCalibrated && sample.flow == FlowState.DISCHARGING -> -1
+        else -> 0
     }
 
     private fun restart(point: Point) {
         anchor = point
         latest = point
+        direction = point.directionHint
     }
 
     companion object {
-        /**
-         * Charge swing a window must span before its ratio is published. Six tenths
-         * of the gauge range spreads the reported-percentage quantisation over a
-         * large span, so one point of gauge error costs well under two percent of
-         * the answer. A policy choice for accuracy, not a mathematical requirement.
-         */
-        const val MINIMUM_PERCENT_SPAN = 60
+        /** Absolute percentage-point swing required in either direction (inclusive). */
+        const val MINIMUM_PERCENT_SPAN = 20
 
         /** Longer than this and charge moved unobserved: re-anchor, never bridge. */
         const val MAX_WINDOW_GAP_MILLIS = 5 * 60_000L
 
         /**
          * Conservative rejection policy, not a universal physical limit. Apply
-         * it to both short counter batches and the completed charging window.
+         * it to both short counter batches and completed charge/discharge windows.
          */
         const val MAX_PLAUSIBLE_CHARGE_AMPS = 10.0
 

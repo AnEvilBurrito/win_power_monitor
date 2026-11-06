@@ -95,11 +95,21 @@ foreground/background time, and results for each run; do not upload private data
       not clamped. The value persists, is labelled user supplied and affects only
       estimated health, never current, reported %, observed capacity or runtime.
 - [ ] Gauge full-capacity estimate can appear immediately with counter + percentage;
-      it stays clearly separate from observed charging capacity.
-- [ ] Record a monotonic charging window spanning >=60 percentage points: observed
-      capacity appears, persists and counts completed windows, not polls. Gaps,
-      unplugging and counter/percentage reversals reset incomplete windows.
-- [ ] Estimated health is unavailable until both observed and design capacity exist.
+      it stays clearly separate from observed capacity.
+- [ ] Record a monotonic charging window spanning >=20 percentage points (e.g.
+      20 -> 40): observed capacity appears, persists and counts completed capacity
+      windows, not polls. Gaps, direction changes and counter/percentage reversals
+      reset incomplete windows.
+- [ ] Record a monotonic discharging window spanning >=20 percentage points (e.g.
+      80 -> 60), including a plugged phone that discharges: observed capacity appears
+      from the same counter/percentage ratio and the copy names capacity windows, not
+      charging windows. A 19-point window reports progress only, and no window may
+      bridge a charge leg into a discharge leg or across a recording gap.
+- [ ] Copy says charging **or** discharging and the 20-point span everywhere it
+      explains observed capacity (Diagnostics caption and pending text, README/help).
+      Unknown plug/flow state and uncalibrated current do not block a valid window.
+- [ ] Estimated health is unavailable until both observed and design capacity exist;
+      health is observed / user-supplied design * 100 in either direction.
 - [ ] Without CHARGE_COUNTER, gauge/observed capacity and runtime stay unavailable.
 - [ ] "Cycle count" shows the platform number on Android 14+ hardware that reports
       it, and states it is not reported where it is absent.
