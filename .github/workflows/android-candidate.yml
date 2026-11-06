@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and verify unsigned Android source
+    name: Build and verify release APK
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -41,24 +41,20 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             'platforms;android-36' 'build-tools;35.0.0'
-      - name: Test release tooling
-        run: python -B -m unittest discover -s scripts/tests
-      - name: Test, lint, build and export locked dependency sources
-        run: pwsh -NoProfile -File scripts/build-android.ps1
-      - name: Package exact committed source and pinned native source
-        run: python scripts/package-android-source.py prepare --commit "$GITHUB_SHA" --output dist/android-input
-      - name: Extract source for independent unsigned release rebuild
-        run: python scripts/package-android-source.py extract --archive dist/android-input/source-input.zip --output dist/android-source-check
-      - name: Rebuild and test the supplied source without signing keys
-        run: pwsh -NoProfile -File dist/android-source-check/scripts/build-android.ps1
-      - name: Verify actual unsigned APKs and bind successful build evidence
-        run: python scripts/android-candidate.py record-build --commit "$GITHUB_SHA" --input dist/android-input --rebuilt dist/android-source-check
+      - name: Test APK verification and signing tooling
+        run: |
+          python -B -m unittest discover -s scripts/tests -p 'test_android_candidate.py'
+          python -B -m unittest discover -s scripts/tests -p 'test_verify_android_apk.py'
+      - name: Test, lint and build release APK
+        shell: pwsh
+        run: ./scripts/build-android.ps1 -Tasks ':app:testReleaseUnitTest', ':app:lintRelease', ':app:assembleRelease'
+      - name: Verify unsigned APK and record successful build evidence
+        run: python scripts/android-candidate.py record-build --commit "$GITHUB_SHA" --input dist/android-input
       - name: Retain exact unsigned inputs for protected signing
         uses: actions/upload-artifact@v4
         with:
           name: wpm-android-candidate-input-${{ github.sha }}-${{ github.run_attempt }}
           path: |
-            dist/android-input/source-input.zip
             dist/android-input/unsigned.apk
             dist/android-input/build.json
           if-no-files-found: error
@@ -71,13 +67,11 @@ jobs:
           path: |
             android/app/build/reports/
             android/app/build/test-results/testReleaseUnitTest/
-            dist/android-source-check/android/app/build/reports/
-            dist/android-source-check/android/app/build/test-results/testReleaseUnitTest/
           if-no-files-found: warn
           retention-days: 14
 
   sign:
-    name: Sign and verify Android publication assets
+    name: Sign and verify APK and checksum
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -102,7 +96,7 @@ jobs:
         with:
           name: wpm-android-candidate-input-${{ github.sha }}-${{ github.run_attempt }}
           path: dist/android-input
-      - name: Sign with permanent key and verify all publication assets
+      - name: Sign APK with permanent key, verify and calculate SHA-256
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -110,14 +104,12 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
         run: python scripts/android-candidate.py sign --commit "$GITHUB_SHA" --input dist/android-input --output dist/android-release
-      - name: Retain complete verified publication inventory
+      - name: Retain signed APK and checksum only
         uses: actions/upload-artifact@v4
         with:
           name: wpm-android-release-assets-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             dist/android-release/*.apk
             dist/android-release/*.apk.sha256
-            dist/android-release/*-source.zip
-            dist/android-release/*-source.zip.sha256
           if-no-files-found: error
           retention-days: 14

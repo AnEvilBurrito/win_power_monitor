@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Record secret-free Android build evidence, then sign in a protected CI job.
 
-Neither command publishes. record-build requires successful original/extracted
-release tests, lint and unsigned SDK checks. sign binds those input hashes to the
-run SHA, uses environment-only credentials, verifies the actual signed APK, and
-packages exactly the four public release assets. Production keys never enter
-Gradle, the checkout, caches or publication assets.
+Neither command publishes. record-build requires successful release tests,
+lint and unsigned APK checks. sign binds that APK's hash to the run SHA, uses
+environment-only credentials, and verifies the signed APK before writing its
+SHA-256 sidecar. Production keys never enter Gradle, caches or public assets.
 """
 import argparse
 import base64
@@ -20,16 +19,17 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-import zipfile
 
 PIN = "D3D54F63925EAD1F229259CA6C711A403DDCE9D06B7B7C76CDFF699C516EF6CF"
 TOOLCHAIN = {"java": "21", "gradle": "8.13", "compile_sdk": 36, "build_tools": "35.0.0"}
-BUILD_CHECKS = ("release_unit_tests", "release_lint", "source_rebuild")
-INPUT_FILES = {"source-input.zip", "unsigned.apk", "build.json"}
+BUILD_CHECKS = ("release_unit_tests", "release_lint")
+INPUT_FILES = {"unsigned.apk", "build.json"}
 
 
 def load(name):
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), Path(__file__).with_name(name + ".py"))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load Android release helper: {name}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -87,7 +87,7 @@ def release_reports(source):
     return {"tests": total, "lint_warnings": sum(i.get("severity") == "Warning" for i in lint)}
 
 
-def record_build(commit, input_dir, rebuilt):
+def record_build(commit, input_dir):
     require_commit(commit)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != commit:
@@ -99,31 +99,22 @@ def record_build(commit, input_dir, rebuilt):
     if not re.search(r'version "21[.\-+\"]', java.stdout + java.stderr):
         raise ValueError("Release evidence requires JDK 21")
     data = identity(Path.cwd())
-    if identity(rebuilt) != data:
-        raise ValueError("Extracted source identity differs from build checkout")
     ref = os.environ.get("GITHUB_REF", "")
     if ref.startswith("refs/tags/") and ref != "refs/tags/android-v" + data["version"]:
         raise ValueError("Dispatch tag does not match the Android version")
-    original_reports = release_reports(Path.cwd())
-    rebuilt_reports = release_reports(rebuilt)
-    apk = load("verify-android-apk")
+    reports = release_reports(Path.cwd())
     original = Path("android/app/build/outputs/apk/release/app-release-unsigned.apk")
-    reconstructed = Path(rebuilt) / original
-    for path in (original, reconstructed):
-        apk.verify(path, **data, unsigned=True)
+    load("verify-android-apk").verify(original, **data, unsigned=True)
     dest = Path(input_dir)
-    if {p.name for p in dest.iterdir()} != {"source-input.zip"}:
-        raise ValueError("Unexpected pre-signing input files")
+    dest.mkdir(parents=True, exist_ok=False)
     shutil.copyfile(original, dest / "unsigned.apk")
     record = {
         "schema": 1, **data, "commit": commit, "toolchain": TOOLCHAIN,
         "unsigned_apk_sha256": digest(dest / "unsigned.apk"),
-        "source_input_sha256": digest(dest / "source-input.zip"),
-        "checks": {key: True for key in BUILD_CHECKS},
-        "original_reports": original_reports, "rebuilt_reports": rebuilt_reports,
+        "checks": {key: True for key in BUILD_CHECKS}, "reports": reports,
     }
     write_json(dest / "build.json", record)
-    print(f"Recorded release build and source rebuild: {original_reports}, {rebuilt_reports}")
+    print(f"Recorded verified release APK: {reports}")
     return record
 
 
@@ -139,21 +130,15 @@ def validate_input(input_dir, commit):
         raise ValueError("Signing input commit/schema/toolchain mismatch")
     checks = data.get("checks")
     if not isinstance(checks, dict) or set(checks) != set(BUILD_CHECKS) or any(checks[k] is not True for k in BUILD_CHECKS):
-        raise ValueError("Signing requires all build/source checks")
+        raise ValueError("Signing requires all release build checks")
     if data.get("application_id") != "io.github.anevilburrito.wpm" or type(data.get("version_code")) is not int or not 0 < data["version_code"] <= 2_100_000_000:
         raise ValueError("Signing input application ID/versionCode mismatch")
     if not isinstance(data.get("version"), str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", data["version"]) or data["version"].endswith("-dev"):
         raise ValueError("Signing input is not a release version")
-    for name, key in (("unsigned.apk", "unsigned_apk_sha256"), ("source-input.zip", "source_input_sha256")):
-        if digest(root / name) != data.get(key):
-            raise ValueError(f"Signing input hash mismatch: {name}")
-    with zipfile.ZipFile(root / "source-input.zip") as source:
-        verifier = load("verify-android-release-assets")
-        verifier._inspect_source(source)
-        verifier._gradle_identity(source, data["version"], data["version_code"], data["application_id"])
-        text = source.read("SOURCE-BUILD.md").decode("utf-8")
-        if f"Exact Git commit: {commit}" not in text.splitlines():
-            raise ValueError("Signing input source record SHA mismatch")
+    if digest(root / "unsigned.apk") != data.get("unsigned_apk_sha256"):
+        raise ValueError("Signing input hash mismatch: unsigned.apk")
+    if any(data[key] != value for key, value in identity(Path.cwd()).items()):
+        raise ValueError("Signing input identity differs from release checkout")
     return data
 
 
@@ -195,7 +180,7 @@ def sign(commit, input_dir, output):
             f.write(decode_key(os.environ["ANDROID_KEYSTORE_BASE64"]))
         key.chmod(0o600)
         aligned = Path(temp) / "aligned.apk"
-        code, stdout, stderr = apk.run_tool(tools["zipalign"], ["-P", "16", "-f", "4", str(root / "unsigned.apk"), str(aligned)], label="zipalign")
+        code, _, _ = apk.run_tool(tools["zipalign"], ["-P", "16", "-f", "4", str(root / "unsigned.apk"), str(aligned)], label="zipalign")
         if code:
             raise ValueError("Pre-signing APK alignment failed")
         arguments = [
@@ -206,11 +191,11 @@ def sign(commit, input_dir, output):
             "--v3-signing-enabled", "true", "--v4-signing-enabled", "false",
             "--out", str(signed), str(aligned),
         ]
-        code, stdout, stderr = apk.run_tool(tools["apksigner"], arguments, label="apksigner sign")
+        code, _, _ = apk.run_tool(tools["apksigner"], arguments, label="apksigner sign")
         if code:
             # Passwords are env references, never literal command arguments.
             raise ValueError("Production APK signing failed; check keystore/password/alias secrets")
-    # Private key has been deleted before inspecting or packaging any public files.
+    # Private key has been deleted before inspecting any public files.
     inspected = apk.verify(signed, version=data["version"], version_code=data["version_code"],
                            application_id=data["application_id"], certificate_sha256=PIN)
     record = {
@@ -219,11 +204,15 @@ def sign(commit, input_dir, output):
         "apk_sha256": inspected["apk_sha256"], "abis": inspected["abis"],
         "toolchain": TOOLCHAIN, "checks": {**data["checks"], **inspected["checks"]},
     }
-    with tempfile.TemporaryDirectory(prefix="wpm-public-record-", dir=temporary_root) as temp:
-        record_file = Path(temp) / "record.json"
-        write_json(record_file, record)
-        load("package-android-source").finalize(root / "source-input.zip", record_file, signed, output)
-    print("Verified signed Android release assets ready; nothing published")
+    checksum = digest(signed)
+    if checksum != inspected["apk_sha256"]:
+        raise ValueError("Signed APK changed after verification")
+    sidecar = signed.with_name(signed.name + ".sha256")
+    sidecar.write_text(f"{checksum}  {signed.name}\n", encoding="ascii", newline="\n")
+    if {p.name for p in output.iterdir()} != {signed.name, sidecar.name}:
+        raise ValueError("Expected only the signed APK and SHA-256 checksum")
+    print(json.dumps(record, indent=2))
+    print("Verified signed APK and checksum ready; nothing published")
     return record
 
 
@@ -233,7 +222,6 @@ def main():
     build = commands.add_parser("record-build")
     build.add_argument("--commit", required=True)
     build.add_argument("--input", type=Path, required=True)
-    build.add_argument("--rebuilt", type=Path, required=True)
     signing = commands.add_parser("sign")
     signing.add_argument("--commit", required=True)
     signing.add_argument("--input", type=Path, required=True)
@@ -241,7 +229,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "record-build":
-            record_build(args.commit, args.input, args.rebuilt)
+            record_build(args.commit, args.input)
         else:
             sign(args.commit, args.input, args.output)
     except Exception as error:

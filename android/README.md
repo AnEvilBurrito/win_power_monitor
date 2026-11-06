@@ -262,8 +262,7 @@ already locating the SDK:
 
 From the repository root, you can instead run
 `pwsh -NoProfile -File scripts/build-android.ps1` to test/lint/build the unsigned
-release variant and export locked dependency sources, without changing the shell
-directory. Set JAVA_HOME to JDK 21 for release verification. ADB commands are
+release variant without changing the shell directory. Set JAVA_HOME to JDK 21 for release verification. ADB commands are
 optional; Android Studio handles development installation and launch.
 
 ### Automated APK builds
@@ -294,19 +293,18 @@ background endurance or observer overhead.
 ### Signed Android release candidates
 
 The manual [signed candidate workflow](../.github/workflows/android-candidate.yml)
-builds and tests the release variant on an immutable master/Android-tag SHA,
-exports all 73 currently resolved runtime dependency sources/POMs/notices, adds
-the pinned graphics-path native C++ source, and rebuilds the extracted source
-without production keys. A separate protected `android-release` job aligns,
-signs and verifies the APK against the approved certificate. Secrets are not
-passed to Gradle and the temporary keystore is deleted before source packaging.
+builds, tests and lints the release APK on an immutable master/Android-tag SHA.
+A separate protected `android-release` job aligns, signs and verifies the APK
+against the approved certificate, then calculates its SHA-256 checksum. Secrets
+are not passed to Gradle and the temporary keystore is always deleted.
+There is no dependency-source export, native-source download or source rebuild.
 
-The final `wpm-android-release-assets-<sha>-<attempt>` artifact contains the signed
-APK, matching source ZIP and two SHA-256 sidecars. It expires after 14 days. The
+The final `wpm-android-release-assets-<sha>-<attempt>` artifact contains only the
+signed APK and its SHA-256 sidecar. It expires after 14 days. The
 workflow does **not** tag or publish; the `android-release` skill separately
 verifies the downloaded inventory and creates an approved GitHub pre-release.
 Android tags use `android-v<VERSION>`, independently of desktop versions.
-See [the pipeline contract](specs/release-pipeline.md) for checks and source scope.
+See [the pipeline contract](specs/release-pipeline.md) for signing and APK checks.
 
 The permanent release ID is `io.github.anevilburrito.wpm`. The first transition
 from an older unsuffixed debug-signed installation normally requires uninstalling
@@ -323,11 +321,10 @@ Local verification for `0.7.0-rc.1` (versionCode 11), using JDK 21 and the SDK:
 :app:testReleaseUnitTest      481 tests, 0 failures/errors/skips
 :app:lintRelease             0 errors, 17 warnings
 :app:assembleRelease         app/build/outputs/apk/release/app-release-unsigned.apk
-:app:exportReleaseDependencies 73 runtime source/POM/license records
-Python release tooling      220 tests passed
+Python release tooling      225 tests passed
 ```
 
-Hosted source-rebuild/signing evidence is provided by the exact candidate run
+Hosted build/signing evidence is provided by the exact candidate run
 linked in each release, not inferred from these local checks.
 The universal APK is approximately 11 MiB. Native ELF LOAD alignment and
 `zipalign -c -P 16 -v 4` both pass. Lint warnings include the intentionally pinned
@@ -373,8 +370,8 @@ See [the current measurement contract](specs/live-current.md).
    NDK/cargo-ndk/Android Rust targets are not needed for the current app.
 4. Validate the first hosted Android workflow run and keep wrapper, unit/lint,
    signature/alignment checks and downloadable debug artifacts working.
-5. Preserve the permanent ID/signing key and verify signed candidate source,
-   checksums and in-place updates; separately review Play/foreground-service policy.
+5. Preserve the permanent ID/signing key and verify signed candidate identity,
+   checksum and in-place updates; separately review Play/foreground-service policy.
 
 ## References
 

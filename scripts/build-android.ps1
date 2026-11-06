@@ -29,8 +29,8 @@
     -WriteLocks.
 
 .PARAMETER Tasks
-    Gradle task names or task paths. Defaults to testReleaseUnitTest, lintRelease,
-    assembleRelease and exportReleaseDependencies. Each token is validated against a
+    Gradle task names or task paths. Defaults to testReleaseUnitTest, lintRelease
+    and assembleRelease. Each token is validated against a
     simple Gradle identifier pattern (letters, digits, '.', '_', '-' and ':'), which
     also keeps the Windows cmd.exe wrapper free of quoting/injection surprises.
     Unqualified names resolve like any Gradle task name; use ':app:<task>' to be
@@ -56,8 +56,7 @@ param(
     [string[]]$Tasks = @(
         'testReleaseUnitTest',
         'lintRelease',
-        'assembleRelease',
-        'exportReleaseDependencies'
+        'assembleRelease'
     ),
     [switch]$WriteLocks
 )

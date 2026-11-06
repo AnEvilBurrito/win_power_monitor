@@ -1,117 +1,57 @@
-# Android release pipeline
+# Android APK release pipeline
 
-This is independent of desktop Cargo packaging. Authorized first version:
-`0.7.0-rc.1`, versionCode `11`, application ID `io.github.anevilburrito.wpm`.
-No device installation or acceptance is automated. The first public pre-release
-explicitly defers phone testing to the maintainer.
+Independent of desktop Cargo packaging. First approved version: `0.7.0-rc.1`,
+versionCode `11`, application ID `io.github.anevilburrito.wpm`.
 
-## Jobs and trust
+## GitHub Actions
 
-`android-candidate.yml` is workflow_dispatch-only, on master or android-v* tags,
-with contents:read. Checkout the immutable run SHA. Build/test and extracted
-source rebuild run without signing secrets. A subsequent job scoped to the
-`android-release` environment signs only that run/attempt's unsigned APK.
-Decode the PKCS12 into RUNNER_TEMP, use environment password references, disable
-configuration caching, remove temporary key on failure/success, and never cache
-or upload signing material. The user approved manual dispatch as the approval
-mechanism for the first run (environment currently has no reviewer rule).
+`.github/workflows/android-candidate.yml` is manual-only with `contents: read`.
+It checks out the immutable run SHA and accepts only master or Android release
+tags whose commit belongs to master. It does not create tags or publish releases.
 
-Expected certificate SHA256:
+1. **Build:** JDK 21, validated Gradle 8.13 wrapper, SDK 36/Build Tools 35.0.0.
+   Run release unit tests, lint and assembly without signing credentials.
+   Verify the unsigned APK and record its hash, identity, commit and successful
+   test/lint results. Upload only that APK and internal build record for signing.
+2. **Sign:** consume the same run/attempt's inputs in protected environment
+   `android-release`. Check the APK hash and identity against the build record
+   and checked-out Gradle config. Align, sign with the permanent PKCS12 key,
+   and verify the actual signature, manifest and native alignment.
+3. **Upload:** calculate SHA-256 of the verified signed bytes and retain the
+   signed APK and checksum for 14 days. Keep diagnostics separate.
+
+There is no dependency-source export, native-source archive download, source
+ZIP or extracted-source rebuild in this workflow. Legacy source-packaging
+helpers are not invoked. WPM remains GPL-3.0-only; release notes must provide
+required source access and build/notice links without adding archive assets.
+
+## Signing and checks
+
+Use existing `android-release` secrets, environment password references and
+restricted temporary runner storage. Never pass keys to Gradle, cache/upload
+signing material or print secret values. Always delete the temporary keystore.
+The maintainer approved manual dispatch without a required reviewer for the
+first run; do not change environment protection as part of a release.
+
+The environment certificate pin and APK's actual signer must both match:
 `D3D54F63925EAD1F229259CA6C711A403DDCE9D06B7B7C76CDFF699C516EF6CF`.
-The environment variable and actual signer must both match this independent pin.
 
-## Public artifact contract
+Require the expected app ID, version/code, non-debuggable manifest, all four
+ABIs, 16 KiB ZIP alignment and native ELF LOAD alignment. Sign only after
+alignment, and do not change signed bytes. Missing or failed checks stop upload.
 
-Final artifact: `wpm-android-release-assets-<sha>-<attempt>`, 14 days, exactly:
+## Public assets and publication
+
+`wpm-android-release-assets-<sha>-<attempt>` contains exactly:
 
 - `wpm-android-v<VERSION>.apk`
 - `wpm-android-v<VERSION>.apk.sha256`
-- `wpm-android-v<VERSION>-source.zip`
-- `wpm-android-v<VERSION>-source.zip.sha256`
 
-Sidecars contain `<lowercase sha256>  <basename>\n`. Source ZIP paths are rooted
-at the archive root, not a wrapper folder. Include Android tracked build/source
-files, root LICENSE, required release scripts, dependency sources/POMs/notices,
-source build instructions, and `ANDROID-RELEASE.json`. Exclude local.properties,
-cache/build directories, personal paths, credentials and private signing files.
-Only whitelisted tracked inputs may enter the archive; gitignore is not enough.
+The checksum contains `<lowercase sha256>  <APK basename>\n`.
+The release skill downloads that successful run's files, verifies the checksum,
+creates an authorized annotated `android-v<VERSION>` tag at the run SHA, and
+publishes a GitHub pre-release with `--latest=false`. Preserve desktop Latest.
+Never substitute local/debug APKs or mix runs/attempts.
 
-`ANDROID-RELEASE.json` schema:
-
-```json
-{
-  "schema": 1,
-  "version": "0.7.0-rc.1",
-  "version_code": 11,
-  "application_id": "io.github.anevilburrito.wpm",
-  "commit": "40 lowercase hex characters",
-  "certificate_sha256": "64 uppercase hex characters",
-  "apk_sha256": "64 lowercase hex characters",
-  "abis": ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"],
-  "toolchain": {"java": "21", "gradle": "8.13", "compile_sdk": 36, "build_tools": "35.0.0"},
-  "checks": {
-    "release_unit_tests": true,
-    "release_lint": true,
-    "source_rebuild": true,
-    "apk_signature": true,
-    "apk_manifest": true,
-    "zip_alignment_16k": true,
-    "native_elf_alignment_16k": true
-  }
-}
-```
-
-The Python-only download verifier validates inventory, hashes, archive safety,
-required source/build files, dependency source hashes, Gradle app identity and
-the record against explicit expected values. It does NOT independently perform
-cryptographic APK signature verification; successful trusted CI checks provide
-that evidence. Fail closed; do not infer success from missing records.
-
-## Dependency source export
-
-`android/release-dependencies.gradle.kts`, applied from app/build.gradle.kts,
-registers `:app:exportReleaseDependencies`. Lock releaseRuntimeClasspath and
-export resolved external runtime components to
-`android/app/build/release-dependencies/manifest.json` plus files. Resolve sources
-JAR and POM for every runtime component, fail if missing. The source export has
-no signing secrets. Capture licenses/notices from POM, source and runtime archives
-(including classes.jar within AARs). Do not include binary runtime artifacts.
-
-Dependency manifest shape (paths relative to release-dependencies/):
-
-```json
-{
-  "schema": 1,
-  "dependencies": [{
-    "coordinate": "group:name:version",
-    "source": "files/group-name-version-sources.jar",
-    "source_sha256": "64 lowercase hex",
-    "pom": "files/group-name-version.pom",
-    "pom_sha256": "64 lowercase hex",
-    "licenses": [{"name": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"}]
-  }]
-}
-```
-
-Copy this directory into source ZIP as `android/dependency-sources/`. Include
-full Apache-2.0 text and captured notices. Check and record licensing; unknown
-licenses require review, not silent omission. Maven source JARs may omit native
-C++ source: additionally include pinned source/build inputs for graphics-path
-1.0.1 and its native dependencies, recording provenance and hashes. Dependency
-coordinates and archive hashes are recorded; networked dependency resolution is
-allowed. Do not claim an offline or bit-reproducible Gradle build.
-
-## Verification and publication
-
-JDK21, Gradle wrapper8.13, API36/Build Tools35.0.0. Run release JVM tests, lint,
-assembly and dependency export; build unsigned release again from extracted
-source. Sign aligned APK using protected key only afterward. Verify using
-apksigner, aapt, zipalign and ELF program headers: expected app/version/code,
-non-debuggable, four expected ABIs and >=16KiB native LOAD alignment. Do not
-modify signed bytes. Package source with checks tied to successful commands.
-
-Download final artifact only from the exact successful SHA/run/attempt, verify
-again locally, create an annotated android-v<VERSION> tag at that SHA, draft
-with four exact files, check assets, then publish --prerelease --latest=false.
-Desktop Latest remains v0.1.6 unless the maintainer independently changes it.
-Never reuse stale artifacts after a code change or failed job.
+The maintainer handles phone testing after the first pre-release. No installation,
+uninstall, data clearing or device-acceptance claim is part of this pipeline.
