@@ -22,10 +22,20 @@ are unchanged.
   conflicting trusted direction, non-positive elapsed steps, gaps over five
   minutes or implausible current. Clear on missing/invalid values, gapBefore or
   recording reset. Never bridge charge/discharge legs or recording gaps.
-- Keep the 5-second reference floor for judging cached counter steps, 10 A rate
-  bounds and full-window rate check, and 100..30,000 mAh plausibility range.
+- Judge each counter batch over the observed elapsed time since the last accepted
+  counter change, or the current window anchor before its first change. Successful
+  polls with an unchanged counter must not advance that clock. These are observed
+  query times, not a guarantee of the hardware's exact refresh time.
+- Keep the 5-second reference floor for that batch-rate check, the 10 A rate bound,
+  the full-window rate check over actual elapsed time, and the 100..30,000 mAh
+  plausibility range. For example, a 15.588 mAh batch after 10 seconds must not be
+  judged as an 11.22 A surge merely because the last poll was 5 seconds ago.
   Percentage 0..100 and nonnegative counters are valid; flat/zero counters never
   fabricate a capacity.
+- Clear/restart the batch clock with every window reset/re-anchor, including a
+  completed window. Accepted nonzero movement advances it immediately, so later
+  batches cannot reuse earlier flat time. Preserve recording gap flags and their
+  existing thresholds; this does not relax screen-off sampling continuity.
 - Complete/re-anchor at the endpoint so subsequent windows never reuse charge.
   Progress and observation weight use the absolute percentage-point span.
 - Keep swing-weighted aggregation and existing durable observations. Earlier
@@ -44,4 +54,8 @@ Cover exact/short/overshooting thresholds in both directions, direction and trus
 state changes, neutral/missing calibration, independent counter/percentage resets,
 missing values, gaps, discontinuities, bounds, cached counter steps, zero endpoints,
 non-overlap, positive weights, legacy aggregation compatibility and health UI.
+Exercise 10-15 second counter batches at 1/2/5 second polling in both directions,
+the inclusive 10 A boundary, genuinely excessive batches after flat polls, and
+batch-clock resets/consumption at every window boundary. Keep real device CSVs
+local; synthetic regressions must not depend on their presence.
 Physical accuracy and OEM background behavior still need device acceptance.

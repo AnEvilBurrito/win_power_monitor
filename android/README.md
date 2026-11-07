@@ -96,6 +96,8 @@ See the [implementation specification](specs/initial-implementation.md),
   points (e.g. 20 -> 40 or 80 -> 60). This is an accuracy policy, not a
   mathematical requirement, and it is an absolute percentage-point span, not 20% of
   the starting level. Neither a full charge nor a full discharge is needed.
+  Cached counter batches are validated over the observed time between counter
+  updates, not just the last poll interval; gap/reset and sanity checks still apply.
   Estimated health compares observed capacity with the user-supplied design value.
 - Cycle count is shown when Android reports it (API 34+). Runtime uses the recent
   counter average, not instantaneous current; charging time additionally needs an

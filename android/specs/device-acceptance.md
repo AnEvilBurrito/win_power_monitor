@@ -108,6 +108,11 @@ foreground/background time, and results for each run; do not upload private data
 - [ ] Copy says charging **or** discharging and the 20-point span everywhere it
       explains observed capacity (Diagnostics caption and pending text, README/help).
       Unknown plug/flow state and uncalibrated current do not block a valid window.
+- [ ] With the screen off in high-resolution mode, verify a continuous >=20-point
+      window still completes when the counter updates in batches every 10-15 seconds
+      but polls run every 1/2/5 seconds. Compare CSV timestamps/counter movement;
+      cached batches must not repeatedly reset progress as false >10 A surges.
+      Real gaps, reversals and implausible whole-window rates must still be rejected.
 - [ ] Estimated health is unavailable until both observed and design capacity exist;
       health is observed / user-supplied design * 100 in either direction.
 - [ ] Without CHARGE_COUNTER, gauge/observed capacity and runtime stay unavailable.

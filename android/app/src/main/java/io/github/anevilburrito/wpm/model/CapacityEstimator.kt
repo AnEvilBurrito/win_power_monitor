@@ -96,7 +96,10 @@ data class CapacityAggregate(
  *    conflicting trusted direction instead of mixing charge and discharge legs.
  * 3. Missing values and `gapBefore` clear the window. Non-positive elapsed steps,
  *    gaps over [MAX_WINDOW_GAP_MILLIS] and implausible counter rates re-anchor it.
- *    Charge that moved unobserved is never attributed to an observed window.
+ *    Charge that moved unobserved is never attributed to an observed window. Judge
+ *    a counter batch over the observed time since the previous counter change (or
+ *    window anchor), with a five-second floor, not just the last poll interval.
+ *    Flat polls extend that interval; every clear/re-anchor starts it afresh.
  * 4. At [MINIMUM_PERCENT_SPAN] percentage points, report
  *    `abs(deltaCharge) / (abs(deltaPercent) / 100)`. Reject values outside
  *    [MIN_PLAUSIBLE_MILLIAMP_HOURS]..[MAX_PLAUSIBLE_MILLIAMP_HOURS], never clamp.
@@ -123,6 +126,8 @@ class CapacityEstimator(
 
     private var anchor: Point? = null
     private var latest: Point? = null
+    /** Last accepted counter change or re-anchor; flat polls must not advance it. */
+    private var counterUpdatedAtMillis: Long? = null
     private var direction = 0
 
     /** Closes the open window; no completed observation is lost or altered. */
@@ -130,6 +135,7 @@ class CapacityEstimator(
     fun reset() {
         anchor = null
         latest = null
+        counterUpdatedAtMillis = null
         direction = 0
     }
 
@@ -167,6 +173,7 @@ class CapacityEstimator(
         }
         val stepMillis = point.elapsedMillis - previous.elapsedMillis
         val chargeStep = point.chargeCounterMicroampHours - previous.chargeCounterMicroampHours
+        val counterStepMillis = point.elapsedMillis - (counterUpdatedAtMillis ?: previous.elapsedMillis)
         val percentStep = point.percent - previous.percent
         val chargeDirection = chargeStep.compareTo(0L)
         val percentDirection = percentStep.compareTo(0)
@@ -179,9 +186,9 @@ class CapacityEstimator(
             (chargeDirection != 0 && chargeDirection != expectedDirection) ||
             (percentDirection != 0 && percentDirection != expectedDirection) ||
             (point.directionHint != 0 && point.directionHint != expectedDirection) ||
-            // Faster polling can expose a batch of cached gauge movement in a
-            // single second; don't interpret its release as a one-second surge.
-            impliedAmps(chargeStep, maxOf(stepMillis, STEP_REFERENCE_MILLIS)) > maxPlausibleAmps
+            // Repeated successful polls can see the same cached counter. Spread its
+            // next batch over the observed update interval, not the final poll alone.
+            impliedAmps(chargeStep, maxOf(counterStepMillis, STEP_REFERENCE_MILLIS)) > maxPlausibleAmps
         ) {
             // Reverse counter/percentage, an unobserved gap, sleep, a gauge reset or an
             // impossible rate: restart from here instead of bridging the discontinuity.
@@ -189,6 +196,7 @@ class CapacityEstimator(
             return null
         }
         latest = point
+        if (chargeStep != 0L) counterUpdatedAtMillis = point.elapsedMillis
         direction = expectedDirection
         val signedPercentSpan = point.percent - start.percent
         val spanPercent = abs(signedPercentSpan)
@@ -252,6 +260,7 @@ class CapacityEstimator(
     private fun restart(point: Point) {
         anchor = point
         latest = point
+        counterUpdatedAtMillis = point.elapsedMillis
         direction = point.directionHint
     }
 
