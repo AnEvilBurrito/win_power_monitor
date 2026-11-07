@@ -202,17 +202,9 @@ cargo build --locked --release
 
 A native, background-first Android app lives in `android/`, separately from the
 released desktop CLI. It records public-API battery telemetry while running as a
-user-started foreground service and is still a development build: real-device
-background endurance and overhead are not yet validated. See
-[Android setup and implementation milestones](android/README.md).
+user-started foreground service.
 
-The **Android debug APK** workflow runs for Android changes on pushes/pull requests
-and can also be started manually from **Actions → Android debug APK → Run workflow**.
-Successful runs retain a debug APK, SHA-256 checksum and version metadata for
-14 days; test/lint diagnostics are retained separately. These are development
-artifacts, not release-signed packages or GitHub Releases. CI debug signing keys
-can differ between runs and from local builds; see the Android README before
-replacing an installed copy.
+Please see `releases` to download the development build. 
 
 ## License
 
