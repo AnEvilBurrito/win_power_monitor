@@ -55,6 +55,7 @@ fn dashboard_render_cost() {
                             step: false,
                             theme: Theme::Default,
                             status: "benchmark",
+                            notice: "",
                             span: span.as_secs_f64(),
                             now,
                             program_elapsed_s: now,

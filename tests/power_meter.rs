@@ -103,6 +103,7 @@ fn desktop_dashboard_renders_system_scope_without_battery_kpi() {
                     step: false,
                     theme: Theme::Default,
                     status: "test",
+                    notice: "",
                     span: 300.0,
                     now: 0.0,
                     program_elapsed_s: 0.0,

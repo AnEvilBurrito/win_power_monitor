@@ -507,6 +507,7 @@ fn synthetic_multi_dashboard_small_large_and_transition() {
                         step: false,
                         theme: Theme::Mono,
                         status: "",
+                        notice: "",
                         span: 300.,
                         now: 0.,
                         program_elapsed_s: 0.0,

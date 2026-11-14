@@ -30,7 +30,7 @@ fn theme_for_key(theme: Theme, key: KeyEvent) -> Option<Theme> {
     }
 }
 
-/// Redraw on changes, with a one-second idle tick for clocks and stale status.
+/// Redraw on changes, with a one-second idle tick for clocks and notice expiry.
 #[derive(Default)]
 struct DashboardRefresh {
     last_draw: Option<Instant>,
@@ -81,18 +81,100 @@ impl Drop for TerminalGuard {
         ratatui::restore();
     }
 }
-fn write_log(log: &mut Option<Log>, s: &Sample, status: &mut String) {
+/// Minimum spacing between exports: each one creates two files, so a held key
+/// would otherwise fill the launch directory.
+const EXPORT_COOLDOWN: Duration = Duration::from_secs(2);
+/// Last action or state message, plus the instant transient feedback should clear.
+/// Export and log toggles write files silently, so their paths must be reported.
+#[derive(Default)]
+struct Notice {
+    text: String,
+    until: Option<Instant>,
+}
+impl Notice {
+    const TTL: Duration = Duration::from_secs(10);
+    /// Feedback for a completed action; reverts to the plain separator when stale.
+    fn temporary(&mut self, text: String, now: Instant) {
+        self.text = text;
+        self.until = Some(now + Self::TTL);
+    }
+    /// Failures and state changes stay visible until the next message.
+    fn sticky(&mut self, text: String) {
+        self.text = text;
+        self.until = None;
+    }
+    fn tick(&mut self, now: Instant) {
+        if self.until.is_some_and(|until| now >= until) {
+            self.clear();
+        }
+    }
+    /// Sticky failures have no expiry, so Esc must be able to dismiss them.
+    fn clear(&mut self) {
+        self.text.clear();
+        self.until = None;
+    }
+    /// Help carries durable state, so it shows failures and skips action feedback
+    /// that the status row is already presenting.
+    fn persistent(&self) -> &str {
+        if self.until.is_none() { &self.text } else { "" }
+    }
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+/// Absolute form of a user-facing path so dashboard feedback names a real location.
+fn locate(path: &std::path::Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+/// One export is two files, so a held key would litter the directory: gate repeats
+/// and report how long the user must wait. Err carries the remaining cooldown.
+fn export_gate(last: Option<Instant>, now: Instant, cooldown: Duration) -> Result<(), Duration> {
+    last.and_then(|last| {
+        let elapsed = now.saturating_duration_since(last);
+        (elapsed < cooldown).then(|| cooldown - elapsed)
+    })
+    .map_or(Ok(()), Err)
+}
+/// Dashboard-mode summary printed after the alternate screen is restored, so the
+/// file locations survive in the shell scrollback once the TUI is gone.
+fn exit_summary(log_path: Option<&std::path::Path>, export_dir: Option<&str>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(p) = log_path {
+        parts.push(format!("log {}", locate(p)));
+    }
+    if let Some(d) = export_dir {
+        parts.push(format!("exports in {d}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+fn write_log(
+    log: &mut Option<Log>,
+    s: &Sample,
+    log_path: Option<&std::path::Path>,
+    notice: &mut Notice,
+) {
     if let Some(writer) = log
         && let Err(e) = writer.write(s)
     {
-        *status = format!("log error: {e}; disabled");
-        eprintln!("wpm: {status}");
+        let at = log_path.map_or_else(String::new, |p| format!(" at {}", locate(p)));
+        notice.sticky(format!("log error: {e}{at}; disabled"));
+        eprintln!("wpm: {}", notice.text());
         *log = None;
     }
 }
 pub fn run(settings: Settings) -> Result<u8, String> {
     let start = Instant::now();
-    let mut log = match &settings.log {
+    // The log target is tracked even while logging is off so the UI can name the
+    // file that `l` will create instead of leaving the user to guess the directory.
+    let mut log_path = settings.log.clone();
+    // Export and log errors have no path of their own: io::Error prints only the
+    // reason, so report the directory the files land in alongside them.
+    let cwd = locate(std::path::Path::new("."));
+    let mut export_dir: Option<String> = None;
+    let mut log = match &log_path {
         Some(p) => match Log::open(p) {
             Ok(log) => Some(log),
             Err(e) => {
@@ -172,7 +254,8 @@ pub fn run(settings: Settings) -> Result<u8, String> {
         stop: stop.clone(),
         thread: Some(thread),
     };
-    let mut status = String::new();
+    let mut notice = Notice::default();
+    let mut last_export: Option<Instant> = None;
     if settings.mode != Mode::Dashboard {
         let mut stdout = io::BufWriter::new(io::stdout().lock());
         let mut previous: Option<f64> = None;
@@ -185,7 +268,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             };
             s.gap |= previous.is_some_and(|p| s.elapsed_s - p > rate.as_secs_f64() * 2.0);
             previous = Some(s.elapsed_s);
-            write_log(&mut log, &s, &mut status);
+            write_log(&mut log, &s, log_path.as_deref(), &mut notice);
             if settings.require_battery && s.battery_present != Some(true) {
                 code = 3;
             }
@@ -225,7 +308,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
         old_hook(info);
     }));
     let mut terminal = ratatui::try_init().map_err(|e| e.to_string())?;
-    let _guard = TerminalGuard;
+    let guard = TerminalGuard;
     let mut history = History::new(
         settings.x_length,
         settings.sample_count,
@@ -251,7 +334,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 code = 3;
                 stop.store(true, Ordering::Release);
             }
-            write_log(&mut log, &s, &mut status);
+            write_log(&mut log, &s, log_path.as_deref(), &mut notice);
             current = Some(history.push(s));
             refresh.sample_received(paused);
             if let Some(sample) = &current {
@@ -259,21 +342,49 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             }
         }
         if refresh.due(Instant::now()) {
+            let now = Instant::now();
+            notice.tick(now);
             let tray_status = tray
                 .as_ref()
                 .and_then(|t| t.status.lock().ok().map(|s| s.clone()))
                 .unwrap_or_else(|| "off".into());
-            let banner = format!(
-                "{status} | log {} | tray {tray_status} | {:.2}s | {} pts max | {}",
-                if log.is_some() { "on" } else { "off" },
-                rate.as_secs_f64(),
-                settings.sample_count,
-                if settings.all_states {
-                    "all-state stats"
-                } else {
-                    "discharge stats"
+            let log_part = match (log.is_some(), &log_path) {
+                (true, Some(p)) => format!("log on {}", locate(p)),
+                (true, None) => "log on".to_string(),
+                (false, Some(p)) => format!("log off (l opens {})", locate(p)),
+                (false, None) => "log off (l opens wpm.csv)".to_string(),
+            };
+            let stats_part = if settings.all_states {
+                "all-state stats"
+            } else {
+                "discharge stats"
+            };
+            // Action feedback wins; otherwise a running log keeps its target visible so
+            // the file can be found long after the "logging on" notice expires.
+            let status_row = if notice.text().is_empty() {
+                match (log.is_some(), &log_path) {
+                    (true, Some(p)) => format!("logging on: appending to {}", locate(p)),
+                    _ => String::new(),
                 }
-            );
+            } else {
+                notice.text().to_string()
+            };
+            let banner = [
+                notice.persistent().to_string(),
+                log_part,
+                export_dir
+                    .as_ref()
+                    .map(|d| format!("last export in {d}"))
+                    .unwrap_or_default(),
+                format!("tray {tray_status}"),
+                format!("{:.2}s", rate.as_secs_f64()),
+                format!("{} pts max", settings.sample_count),
+                stats_part.to_string(),
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | ");
             if !paused {
                 ui_state
                     .analytics
@@ -326,6 +437,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                             step,
                             theme,
                             status: &banner,
+                            notice: &status_row,
                             span: settings.x_length.as_secs_f64(),
                             now: if paused {
                                 frozen
@@ -363,7 +475,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
             refresh.request();
             if let Some(next) = theme_for_key(theme, key) {
                 theme = next;
-                status = format!("theme: {theme} (session only)");
+                notice.temporary(format!("theme: {theme} (session only)"), Instant::now());
                 continue;
             }
             match key.code {
@@ -384,7 +496,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     if let Some(l) = &mut log
                         && let Err(e) = l.flush()
                     {
-                        status = format!("log flush: {e}");
+                        notice.sticky(format!("log flush: {e}"));
                     }
                 }
                 KeyCode::Char('r') => {
@@ -427,35 +539,84 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     step = !step;
                     refresh.invalidate();
                 }
-                KeyCode::Char('e') => {
-                    if let Some(l) = &mut log {
-                        let _ = l.flush();
+                KeyCode::Esc => {
+                    if help {
+                        help = false;
+                    } else {
+                        // Sticky failures never expire on their own, so this is the
+                        // only neutral way to get the row back to its separator.
+                        notice.clear();
                     }
-                    status = match crate::export::export(
-                        &frozen_view.as_ref().map_or(&history, |v| &v.0).samples,
-                    ) {
-                        Ok(base) => format!("exported {base}.csv + .json"),
-                        Err(e) => format!("export error: {e}"),
-                    };
+                }
+                KeyCode::Char('e') => {
+                    let now = Instant::now();
+                    if let Err(wait) = export_gate(last_export, now, EXPORT_COOLDOWN) {
+                        let last = export_dir
+                            .as_ref()
+                            .map_or_else(String::new, |d| format!("; last in {d}"));
+                        notice.temporary(
+                            format!("export throttled: next in {}s{last}", wait.as_secs().max(1)),
+                            now,
+                        );
+                    } else {
+                        last_export = Some(now);
+                        if let Some(l) = &mut log {
+                            let _ = l.flush();
+                        }
+                        let samples = &frozen_view.as_ref().map_or(&history, |v| &v.0).samples;
+                        match crate::export::export(samples) {
+                            Ok(base) => {
+                                // Lead with the folder: the generated name is long enough
+                                // to push the location off a narrow terminal, and the
+                                // folder is what lets the user find the files again.
+                                let dir = std::path::absolute(format!("{base}.csv"))
+                                    .ok()
+                                    .and_then(|p| p.parent().map(|d| d.display().to_string()))
+                                    .unwrap_or_else(|| "the launch directory".into());
+                                export_dir = Some(dir.clone());
+                                notice.temporary(format!("exported 2 files to {dir}"), now);
+                            }
+                            Err(e) => notice.sticky(format!("export error: {e} in {cwd}")),
+                        }
+                    }
                 }
                 KeyCode::Char('l') => {
                     if let Some(mut l) = log.take() {
-                        status = match l.flush() {
-                            Ok(()) => "logging off".into(),
-                            Err(e) => format!("log flush: {e}"),
-                        };
+                        let path = log_path.as_deref().map(locate);
+                        match l.flush() {
+                            Ok(()) => {
+                                let text = path.map_or_else(
+                                    || "logging off".to_string(),
+                                    |p| format!("logging off: {p}"),
+                                );
+                                notice.temporary(text, Instant::now())
+                            }
+                            // io::Error names no path: without one the user cannot
+                            // tell which file failed or where it lived.
+                            Err(e) => {
+                                let text = path.map_or_else(
+                                    || format!("log flush error: {e}"),
+                                    |p| format!("log flush error: {e} at {p}"),
+                                );
+                                notice.sticky(text)
+                            }
+                        }
                     } else {
-                        match Log::open(
-                            settings
-                                .log
-                                .as_deref()
-                                .unwrap_or(std::path::Path::new("wpm.csv")),
-                        ) {
+                        let path = log_path
+                            .clone()
+                            .unwrap_or_else(|| std::path::PathBuf::from("wpm.csv"));
+                        match Log::open(&path) {
                             Ok(l) => {
                                 log = Some(l);
-                                status = "logging on".into();
+                                log_path = Some(path.clone());
+                                notice.temporary(
+                                    format!("logging on: appending to {}", locate(&path)),
+                                    Instant::now(),
+                                );
                             }
-                            Err(e) => status = format!("log error: {e}"),
+                            Err(e) => {
+                                notice.sticky(format!("log error: {e} opening {}", locate(&path)))
+                            }
                         }
                     }
                 }
@@ -468,6 +629,12 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     }
     drop(sampler);
     drop(tray);
+    // Restore the terminal first, then print: the alt screen is discarded on exit,
+    // so anything written before restore would never reach the user's scrollback.
+    drop(guard);
+    if let Some(summary) = exit_summary(log_path.as_deref(), export_dir.as_deref()) {
+        eprintln!("wpm: {summary}");
+    }
     Ok(code)
 }
 
@@ -527,6 +694,112 @@ mod tests {
         refresh.invalidate(); // Reset, pause/resume, signed/stepped mode changes.
         assert!(refresh.prepared.is_none());
         assert!(refresh.dirty);
+    }
+
+    #[test]
+    fn notice_expiry_keeps_failures_and_clears_action_feedback() {
+        let start = Instant::now();
+        let mut notice = Notice::default();
+        assert_eq!(notice.text(), "", "no notice before the first keypress");
+
+        notice.temporary("exported x.csv + .json in /tmp".into(), start);
+        assert_eq!(
+            notice.persistent(),
+            "",
+            "help must not repeat what the status row already shows"
+        );
+        notice.tick(start + Notice::TTL - Duration::from_millis(1));
+        assert_eq!(notice.text(), "exported x.csv + .json in /tmp");
+        notice.tick(start + Notice::TTL);
+        assert_eq!(notice.text(), "", "action feedback must not linger forever");
+
+        notice.sticky("export error: disk full".into());
+        assert_eq!(notice.persistent(), "export error: disk full");
+        notice.tick(start + Notice::TTL * 100);
+        assert_eq!(
+            notice.text(),
+            "export error: disk full",
+            "failures stay until replaced"
+        );
+    }
+
+    #[test]
+    fn esc_clears_a_sticky_failure_that_never_expires() {
+        let start = Instant::now();
+        let mut notice = Notice::default();
+        notice.sticky("log error: Permission denied opening C:\\wpm.csv".into());
+        notice.tick(start + Notice::TTL * 100);
+        assert!(!notice.text().is_empty(), "sticky failures have no timeout");
+        notice.clear();
+        assert_eq!(notice.text(), "");
+        assert_eq!(notice.persistent(), "");
+        notice.clear(); // Dismissing an already empty notice is harmless.
+        assert_eq!(notice.text(), "");
+    }
+
+    #[test]
+    fn exports_are_throttled_so_a_held_key_cannot_fill_the_directory() {
+        let start = Instant::now();
+        assert_eq!(export_gate(None, start, EXPORT_COOLDOWN), Ok(()));
+        assert_eq!(
+            export_gate(Some(start), start, EXPORT_COOLDOWN),
+            Err(EXPORT_COOLDOWN),
+            "a repeat in the same instant is refused"
+        );
+        assert_eq!(
+            export_gate(
+                Some(start),
+                start + Duration::from_millis(500),
+                EXPORT_COOLDOWN
+            ),
+            Err(Duration::from_millis(1500))
+        );
+        assert_eq!(
+            export_gate(Some(start), start + EXPORT_COOLDOWN, EXPORT_COOLDOWN),
+            Ok(()),
+            "the cooldown elapses"
+        );
+        // 40 key-repeat presses inside one cooldown window produce one export.
+        let mut last = None;
+        let mut exports = 0;
+        for press in 0..40 {
+            let now = start + Duration::from_millis(press * 30);
+            if export_gate(last, now, EXPORT_COOLDOWN).is_ok() {
+                last = Some(now);
+                exports += 1;
+            }
+        }
+        assert_eq!(exports, 1);
+    }
+
+    #[test]
+    fn exit_summary_names_the_log_and_export_locations() {
+        assert_eq!(exit_summary(None, None), None, "quiet run stays quiet");
+
+        let log = exit_summary(Some(std::path::Path::new("wpm.csv")), None).unwrap();
+        assert!(log.starts_with("log "), "{log}");
+        assert!(log.ends_with("wpm.csv"), "{log}");
+        assert!(
+            std::path::Path::new(log.trim_start_matches("log ")).is_absolute(),
+            "{log} must be findable after the TUI is gone"
+        );
+
+        assert_eq!(
+            exit_summary(None, Some("/tmp/logs")).unwrap(),
+            "exports in /tmp/logs"
+        );
+        let both = exit_summary(Some(std::path::Path::new("wpm.csv")), Some("/tmp/logs")).unwrap();
+        assert!(both.contains("exports in /tmp/logs"), "{both}");
+    }
+
+    #[test]
+    fn locate_names_an_absolute_path_for_file_feedback() {
+        let shown = locate(std::path::Path::new("wpm.csv"));
+        assert!(
+            std::path::Path::new(&shown).is_absolute(),
+            "{shown} must not be relative to the launch directory"
+        );
+        assert!(shown.ends_with("wpm.csv"));
     }
 
     #[test]

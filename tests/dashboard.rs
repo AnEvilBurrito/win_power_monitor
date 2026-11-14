@@ -62,6 +62,7 @@ fn render(
                     step: false,
                     theme: Theme::Default,
                     status: "log off · tray off",
+                    notice: "",
                     span: 300.0,
                     now: state.x[1],
                     program_elapsed_s: 90061.0,
@@ -82,6 +83,111 @@ fn text(b: &Buffer) -> String {
         .map(|y| row(b, y))
         .collect::<Vec<_>>()
         .join("\n")
+}
+/// Dashboard with keypress feedback, used by the notice layout tests.
+fn render_notice(w: u16, h: u16, notice: &str) -> Buffer {
+    let mut h_history = history();
+    h_history.push(sample(0.0, Some(-12.4)));
+    let state = state();
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal
+        .draw(|f| {
+            ui::draw(
+                f,
+                &View {
+                    history: &h_history,
+                    latest: h_history.samples.back(),
+                    paused: false,
+                    help: false,
+                    absolute: true,
+                    step: false,
+                    theme: Theme::Default,
+                    status: "log on /tmp/wpm.csv",
+                    notice,
+                    span: 300.0,
+                    now: 0.0,
+                    program_elapsed_s: 0.0,
+                    stale: false,
+                    rate: 2.0,
+                    state: &state,
+                },
+            )
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+/// Export and log toggles write files, so their feedback must be visible on the
+/// dashboard itself; help-only feedback reads as an unresponsive key.
+#[test]
+fn action_notice_is_visible_above_the_controls_row() {
+    let notice = "logging on: appending to /tmp/wpm.csv";
+    let b = render_notice(100, 24, notice);
+    let notice_row = row(&b, 22);
+    assert!(notice_row.contains(notice), "notice row was {notice_row:?}");
+    assert!(
+        !notice_row.contains('─'),
+        "a notice must replace the separator, not hide under it"
+    );
+    assert_eq!(row(&b, 16), "─".repeat(100), "other separators survive");
+    assert!(row(&b, 23).contains("q quit"));
+}
+/// A narrow terminal must not clip away the location: the tail is the only part
+/// that lets the user find the file, so it survives while the middle is elided.
+#[test]
+fn long_notices_keep_the_path_tail_and_never_overflow() {
+    let notice = "logging on: appending to /home/someone/very/deep/project/folder/with-a-long-name/logs/wpm.csv";
+    for width in [80u16, 60, 40] {
+        let b = render_notice(width, 24, notice);
+        let notice_row = row(&b, 22);
+        assert!(
+            notice_row.contains("wpm.csv"),
+            "{width} cols lost the file name: {notice_row:?}"
+        );
+        assert!(
+            notice_row.contains('…'),
+            "{width} cols must elide, not silently truncate: {notice_row:?}"
+        );
+        assert!(
+            notice_row.trim_end().chars().count() <= width as usize,
+            "{width} cols: {notice_row:?} must fit one row"
+        );
+        assert!(
+            notice_row.starts_with(" logging"),
+            "{width} cols: the action is still named: {notice_row:?}"
+        );
+    }
+}
+/// The notice is inline, so it must not reflow anything: the row already exists as
+/// a separator, so the widget is swapped and every other cell stays put. This is a
+/// pixel diff rather than a layout argument, at every supported size.
+#[test]
+fn a_notice_never_moves_the_rest_of_the_layout() {
+    let notice = "exported 2 files to /home/someone/very/deep/project/folder/logs";
+    for (w, h) in [(120u16, 32u16), (100, 24), (80, 24), (60, 14)] {
+        let idle = render_notice(w, h, "");
+        let shown = render_notice(w, h, notice);
+        let notice_row = h - 2;
+        for y in 0..h {
+            if y == notice_row {
+                continue;
+            }
+            assert_eq!(
+                row(&idle, y),
+                row(&shown, y),
+                "row {y} moved at {w}x{h} when the notice appeared"
+            );
+        }
+        assert_ne!(
+            row(&idle, notice_row),
+            row(&shown, notice_row),
+            "the notice row itself must change at {w}x{h}"
+        );
+        assert!(row(&shown, notice_row).contains("exported"), "{w}x{h}");
+        assert!(
+            row(&shown, notice_row).chars().count() <= w as usize,
+            "{w}x{h}: a notice must never widen its row"
+        );
+    }
 }
 #[test]
 fn fixed_viewport_growth_rollover_reset_and_clock_anchor() {
@@ -442,6 +548,7 @@ fn theme_review_artifact() {
                                 step: false,
                                 theme: *theme,
                                 status: "synthetic review fixture",
+                                notice: "",
                                 span: 300.0,
                                 now: 300.0,
                                 program_elapsed_s: 300.0,
@@ -572,6 +679,7 @@ fn low_battery_threshold_and_colour_contract() {
                             step: false,
                             theme: *theme,
                             status: "test",
+                            notice: "",
                             span: 300.0,
                             now: 0.0,
                             program_elapsed_s: 0.0,
@@ -635,6 +743,7 @@ fn switching_themes_repaints_live_paused_and_diagnostics_without_changing_histor
                             step: false,
                             theme,
                             status: "test",
+                            notice: "",
                             span: 300.0,
                             now: 2.0,
                             program_elapsed_s: 2.0,
@@ -718,6 +827,7 @@ fn prepared_render_matches_uncached_across_gaps_modes_and_viewports() {
                         step,
                         theme,
                         status: "test",
+                        notice: "",
                         span: 30.0,
                         now,
                         program_elapsed_s: now,

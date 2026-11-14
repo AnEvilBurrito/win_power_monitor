@@ -101,7 +101,10 @@ pub struct View<'a> {
     pub absolute: bool,
     pub step: bool,
     pub theme: Theme,
+    /// Durable line shown inside help (log/tray/rate summary plus last notice).
     pub status: &'a str,
+    /// Transient keypress feedback shown on the dashboard status row.
+    pub notice: &'a str,
     pub span: f64,
     pub now: f64,
     pub program_elapsed_s: f64,
@@ -141,6 +144,23 @@ impl PreparedHistory {
     }
 }
 
+/// Fit a status message to one terminal row. Truncating the tail would drop the
+/// file path, which is the whole point of the message, so elide the middle and
+/// keep both the action and the end of the path.
+fn fit_notice(text: &str, width: usize) -> String {
+    let count = text.chars().count();
+    if count <= width {
+        return format!(" {text}");
+    }
+    let head = width / 3;
+    let tail = width.saturating_sub(head + 1);
+    let mut out = String::with_capacity(width + 1);
+    out.push(' ');
+    out.extend(text.chars().take(head));
+    out.push('…');
+    out.extend(text.chars().skip(count.saturating_sub(tail)));
+    out
+}
 fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'static> {
     let (avg, min, max) = if absolute {
         (
@@ -198,11 +218,33 @@ pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory
         Constraint::Length(1),
     ])
     .split(area);
-    for i in [1, 3, 5, 7] {
+    for i in [1, 3, 5] {
         frame.render_widget(
             Paragraph::new("─".repeat(area.width as usize))
                 .style(Style::default().fg(palette.border)),
             rows[i],
+        );
+    }
+    // The row above the controls shows the last action: export and log feedback is
+    // otherwise invisible, so a keypress that writes files must report itself.
+    let notice = v.notice.trim();
+    if notice.is_empty() {
+        frame.render_widget(
+            Paragraph::new("─".repeat(area.width as usize))
+                .style(Style::default().fg(palette.border)),
+            rows[7],
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                fit_notice(notice, area.width.saturating_sub(1) as usize),
+                Style::default().fg(if notice.contains("error") {
+                    palette.warning
+                } else {
+                    palette.foreground
+                }),
+            )),
+            rows[7],
         );
     }
     let live = if v.paused {
@@ -531,7 +573,7 @@ pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory
                 },
             );
         let content = format!(
-            "Battery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nTheme: {theme} (session only)\nSession: since launch/reset; gaps separate epochs.\n{status}\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export · l log · a signed/magnitude · s step\nt/T next/previous theme\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
+            "{status}\n\nBattery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nTheme: {theme} (session only)\nSession: since launch/reset; gaps separate epochs.\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export (one every 2s) · l log · a signed/magnitude · s step\nt/T next/previous theme · Esc dismiss notice / close help\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
             v.latest.map_or("—".into(), remaining_label),
             number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),
             if v.absolute { "magnitude" } else { "signed" },

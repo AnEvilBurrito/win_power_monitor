@@ -150,7 +150,19 @@ logging, and tray updates are independent of this display refresh.
 | `t` / `Shift+t` | Next / previous theme (session only) |
 | `r` | Reset history and session statistics |
 | `e` / `l` | Export displayed window / toggle CSV logging |
+| `Esc` | Dismiss the status notice, or close help |
 | `q` | Quit |
+
+`e` and `l` report the file they touched on the status row directly above the
+controls line. Exports are throttled to one every two seconds, so holding `e`
+reports `export throttled` instead of writing a file per key repeat. Feedback
+names an absolute path, keeps that path visible when a narrow terminal has to
+elide the middle of the line, and clears after 10 seconds; failures stay until
+`Esc` or the next action. Exports write `wpm-export-<UTC>-<pid>.csv`
+and `.json` to the launch directory, and `l` appends to the `--log` file or to
+`wpm.csv` in the launch directory when no `--log` was given. Press `?` to see the
+current log target and the last export folder at the top of the help text, and
+look for the `wpm: log … · exports in …` line printed after the dashboard exits.
 
 ## Configuration
 
