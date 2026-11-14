@@ -1,3 +1,13 @@
+# Version 0.1.8 - export feedback and power distribution view
+
+- Show export and log destinations on a status row above the controls line,
+  cleared by `Esc` or after 10 seconds; failures stay until dismissed.
+- Throttle `e` exports to one every two seconds, name the absolute path in the
+  notice, and print the log file and export folder after the dashboard exits.
+- Add a `g` power distribution view: in-memory discharge readings counted into
+  percent-per-watt bins in the same plot area, with `n`, bin width, and
+  exclusions in the header; the line chart stays below eight usable readings.
+
 # Version 0.1.7-c - macOS nested capacity fix
 
 - Read AppleRaw charge fields inside BatteryData when absent at the top level;
