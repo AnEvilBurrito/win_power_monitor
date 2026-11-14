@@ -505,6 +505,7 @@ fn synthetic_multi_dashboard_small_large_and_transition() {
                         help: false,
                         absolute: false,
                         step: false,
+                        view: ui::ViewKind::Line,
                         theme: Theme::Mono,
                         status: "",
                         notice: "",

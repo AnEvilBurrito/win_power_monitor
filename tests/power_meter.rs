@@ -101,6 +101,7 @@ fn desktop_dashboard_renders_system_scope_without_battery_kpi() {
                     help: false,
                     absolute: true,
                     step: false,
+                    view: ui::ViewKind::Line,
                     theme: Theme::Default,
                     status: "test",
                     notice: "",

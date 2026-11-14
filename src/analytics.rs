@@ -52,7 +52,7 @@ impl Analytics {
     }
 }
 
-fn consumption(sample: &Sample) -> Option<f64> {
+pub(crate) fn consumption(sample: &Sample) -> Option<f64> {
     if !sample.available || sample.transition {
         return None;
     }

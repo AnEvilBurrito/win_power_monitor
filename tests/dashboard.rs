@@ -60,6 +60,7 @@ fn render(
                     help,
                     absolute: !signed,
                     step: false,
+                    view: ui::ViewKind::Line,
                     theme: Theme::Default,
                     status: "log off · tray off",
                     notice: "",
@@ -101,6 +102,7 @@ fn render_notice(w: u16, h: u16, notice: &str) -> Buffer {
                     help: false,
                     absolute: true,
                     step: false,
+                    view: ui::ViewKind::Line,
                     theme: Theme::Default,
                     status: "log on /tmp/wpm.csv",
                     notice,
@@ -546,6 +548,7 @@ fn theme_review_artifact() {
                                 help,
                                 absolute: true,
                                 step: false,
+                                view: ui::ViewKind::Line,
                                 theme: *theme,
                                 status: "synthetic review fixture",
                                 notice: "",
@@ -677,6 +680,7 @@ fn low_battery_threshold_and_colour_contract() {
                             help: false,
                             absolute: true,
                             step: false,
+                            view: ui::ViewKind::Line,
                             theme: *theme,
                             status: "test",
                             notice: "",
@@ -741,6 +745,7 @@ fn switching_themes_repaints_live_paused_and_diagnostics_without_changing_histor
                             help,
                             absolute: true,
                             step: false,
+                            view: ui::ViewKind::Line,
                             theme,
                             status: "test",
                             notice: "",
@@ -803,7 +808,8 @@ fn prepared_render_matches_uncached_across_gaps_modes_and_viewports() {
         }
         for absolute in [false, true] {
             for step in [false, true] {
-                let prepared = ui::PreparedHistory::new(&history, absolute, step);
+                let prepared =
+                    ui::PreparedHistory::new(&history, absolute, step, ui::ViewKind::Line);
                 state.advance(50.0, 30.0, &history, absolute);
                 let y = state.y;
                 for (width, height, theme, now, paused, help) in [
@@ -825,6 +831,7 @@ fn prepared_render_matches_uncached_across_gaps_modes_and_viewports() {
                         help,
                         absolute,
                         step,
+                        view: ui::ViewKind::Line,
                         theme,
                         status: "test",
                         notice: "",
@@ -870,4 +877,182 @@ fn estimates_stay_visible_before_verbose_diagnostics() {
         }
         assert!(!content.contains("provider detail 99"));
     }
+}
+
+/// The real 60-sample discharge session behind the distribution tests.
+const SESSION: [f64; 60] = [
+    3.728, 3.743, 3.821, 3.840, 3.841, 3.841, 3.889, 3.987, 4.035, 4.049, 4.052, 4.066, 4.084,
+    4.100, 4.112, 4.149, 4.164, 4.225, 4.259, 4.324, 4.370, 4.403, 4.498, 4.627, 4.664, 4.743,
+    4.793, 4.803, 4.821, 4.821, 4.883, 4.890, 4.966, 4.997, 5.044, 5.095, 5.141, 5.175, 5.189,
+    5.189, 5.190, 5.256, 5.306, 5.335, 5.478, 5.496, 5.561, 5.657, 5.747, 6.027, 6.223, 6.318,
+    6.492, 6.595, 6.810, 6.859, 6.979, 7.848, 8.089, 9.292,
+];
+
+fn session() -> History {
+    let mut h_history = History::new(
+        Duration::from_secs(3600),
+        1000,
+        Duration::from_secs(5),
+        false,
+    );
+    for (index, watts) in SESSION.iter().enumerate() {
+        let mut reading = sample(index as f64 * 5.0, Some(-watts));
+        reading.available = true;
+        h_history.push(reading);
+    }
+    h_history
+}
+
+fn render_kind(w: u16, h: u16, history: &History, view: ui::ViewKind) -> Buffer {
+    let state = state();
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal
+        .draw(|f| {
+            ui::draw(
+                f,
+                &View {
+                    history,
+                    latest: history.samples.back(),
+                    paused: false,
+                    help: false,
+                    absolute: true,
+                    step: false,
+                    view,
+                    theme: Theme::Default,
+                    status: "test",
+                    notice: "",
+                    span: 300.0,
+                    now: 300.0,
+                    program_elapsed_s: 300.0,
+                    stale: false,
+                    rate: 5.0,
+                    state: &state,
+                },
+            );
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// Pressing `g` swaps a chart for a distribution in the same area: the rows above
+/// and below the plot must be byte-identical, exactly like the notice row.
+#[test]
+fn the_distribution_replaces_the_line_chart_in_place() {
+    let history = session();
+    let line = render_kind(100, 24, &history, ui::ViewKind::Line);
+    let bars = render_kind(100, 24, &history, ui::ViewKind::Histogram);
+    assert!(
+        row(&line, 5).contains("window 300s") && !row(&line, 5).contains("Distribution"),
+        "the line chart keeps its header: {:?}",
+        row(&line, 5)
+    );
+    let header = row(&bars, 5);
+    assert!(header.contains("Distribution"), "{header:?}");
+    assert!(header.contains("n=60"), "{header:?}");
+    assert!(header.contains("9 bins"), "{header:?}");
+    assert!(header.contains("0.75 W"), "{header:?}");
+    // Rows outside the plot area are untouched by the switch.
+    for y in [0, 1, 2, 3, 4, 16, 17, 18, 19, 20, 21, 22, 23] {
+        assert_eq!(row(&line, y), row(&bars, y), "row {y} changed");
+    }
+    assert!(
+        (6..16).any(|y| row(&bars, y).contains('█')),
+        "the plot area must hold bars"
+    );
+}
+
+/// Heights follow the percentages: the 35 % bin reaches one row higher than any
+/// other, and the empty bin leaves a visible gap instead of a sliver.
+#[test]
+fn bar_heights_follow_the_percentages() {
+    let bars = render_kind(100, 24, &session(), ui::ViewKind::Histogram);
+    let first = (6..16)
+        .find(|y| row(&bars, *y).contains('█'))
+        .expect("a bar");
+    assert_eq!(
+        row(&bars, first).matches('█').count(),
+        9,
+        "only the tallest bin (35%) reaches the top row: {:?}",
+        row(&bars, first)
+    );
+    let baseline = row(&bars, 14);
+    assert_eq!(
+        baseline.matches('█').count(),
+        9 * 8,
+        "eight non-empty bins of nine columns each: {baseline:?}"
+    );
+    assert_eq!(
+        baseline.matches("█████████").count(),
+        8,
+        "the empty bin leaves a gap instead of a sliver: {baseline:?}"
+    );
+}
+
+#[test]
+fn a_short_history_keeps_the_line_chart_until_there_is_a_distribution() {
+    let mut h_history = History::new(
+        Duration::from_secs(3600),
+        1000,
+        Duration::from_secs(5),
+        false,
+    );
+    for index in 0..5 {
+        let mut reading = sample(index as f64 * 5.0, Some(-5.0));
+        reading.available = true;
+        h_history.push(reading);
+    }
+    let bars = render_kind(100, 24, &h_history, ui::ViewKind::Histogram);
+    let header = row(&bars, 5);
+    assert!(header.contains("collecting 5/8"), "{header:?}");
+    assert!(
+        (6..16).all(|y| !row(&bars, y).contains('█')),
+        "no distribution is drawn from five readings"
+    );
+}
+
+#[test]
+fn bin_edges_thin_out_instead_of_overlapping() {
+    for width in [120u16, 100, 80, 60] {
+        let bars = render_kind(width, 24, &session(), ui::ViewKind::Histogram);
+        let edges = row(&bars, 15);
+        let labels: Vec<&str> = edges.split_whitespace().collect();
+        assert!(
+            labels.len() <= 9,
+            "{width} cols drew {} edge labels",
+            labels.len()
+        );
+        assert!(
+            labels.contains(&"3") && labels.contains(&"9"),
+            "{width} cols must still name both ends: {edges:?}"
+        );
+        assert!(
+            edges.chars().count() <= width as usize,
+            "{width} cols: the edge row overflowed"
+        );
+        // No two labels may collide: every gap between them is at least one space.
+        for pair in labels.windows(2) {
+            assert_ne!(pair[0], pair[1], "duplicate label {pair:?}");
+        }
+    }
+}
+
+#[test]
+fn charging_only_history_explains_why_there_is_no_distribution() {
+    let mut h_history = History::new(
+        Duration::from_secs(3600),
+        1000,
+        Duration::from_secs(5),
+        false,
+    );
+    for index in 0..12 {
+        let mut reading = sample(index as f64 * 5.0, Some(12.0));
+        reading.state = State::Charging;
+        reading.available = true;
+        h_history.push(reading);
+    }
+    let bars = render_kind(100, 24, &h_history, ui::ViewKind::Histogram);
+    let header = row(&bars, 5);
+    assert!(header.contains("no discharge readings yet"), "{header:?}");
+    assert!(header.contains("12 excluded"), "{header:?}");
+    assert!((6..16).all(|y| !row(&bars, y).contains('█')), "no bars");
 }

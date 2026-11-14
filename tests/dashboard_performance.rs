@@ -28,10 +28,18 @@ fn dashboard_render_cost() {
         let mut state = UiState::new(Utc::now(), 0.0, span.as_secs_f64());
         let start = Instant::now();
         state.advance(span.as_secs_f64(), span.as_secs_f64(), &history, true);
-        let prepared = PreparedHistory::new(&history, true, false);
+        let prepared = PreparedHistory::new(&history, true, false, ui::ViewKind::Line);
         eprintln!(
             "{count} samples: {:.3} ms to prepare history + axes",
             start.elapsed().as_secs_f64() * 1000.0
+        );
+        // The distribution sorts the population, so it is the expensive path.
+        let start = Instant::now();
+        let bins = PreparedHistory::new(&history, true, true, ui::ViewKind::Histogram).bins;
+        eprintln!(
+            "{count} samples: {:.3} ms to prepare a distribution ({} bins)",
+            start.elapsed().as_secs_f64() * 1000.0,
+            bins.map_or(0, |bins| bins.bins())
         );
         for cached in [false, true] {
             let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
@@ -53,6 +61,7 @@ fn dashboard_render_cost() {
                             help: false,
                             absolute: true,
                             step: false,
+                            view: ui::ViewKind::Line,
                             theme: Theme::Default,
                             status: "benchmark",
                             notice: "",

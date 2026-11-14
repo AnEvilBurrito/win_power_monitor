@@ -150,6 +150,7 @@ logging, and tray updates are independent of this display refresh.
 | `t` / `Shift+t` | Next / previous theme (session only) |
 | `r` | Reset history and session statistics |
 | `e` / `l` | Export displayed window / toggle CSV logging |
+| `g` | Line chart ↔ distribution of the sampled watts |
 | `Esc` | Dismiss the status notice, or close help |
 | `q` | Quit |
 
@@ -163,6 +164,19 @@ and `.json` to the launch directory, and `l` appends to the `--log` file or to
 `wpm.csv` in the launch directory when no `--log` was given. Press `?` to see the
 current log target and the last export folder at the top of the help text, and
 look for the `wpm: log … · exports in …` line printed after the dashboard exits.
+
+`g` swaps the line chart for the distribution of the same samples: watts on the
+x-axis, percentage of readings on the y-axis, drawn in the same plot area so
+nothing else on screen moves. It counts battery-discharge and verified
+whole-system readings only — charging wattage is constant while the pack fills,
+so it would only add a spike. Each reading counts once, so the bars show where
+the time went, not what an instantaneous sample would look like. Bin edges follow
+Freedman–Diaconis, snap to a readable width and to the meter's own increment, and
+cover the data rather than starting at zero. The axis is linear unless the sample
+range spans a decade, in which case the bins are log-spaced and the header says
+so. The header always reports `n`, the bin count and width, and how many readings
+were excluded; below eight usable readings the line chart stays up and the header
+reports how many more are needed.
 
 ## Configuration
 

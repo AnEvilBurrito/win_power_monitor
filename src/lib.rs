@@ -3,6 +3,7 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod export;
+pub mod histogram;
 pub mod macos;
 pub mod macos_smc;
 pub mod model;

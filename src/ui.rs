@@ -93,6 +93,23 @@ impl UiState {
             .to_string()
     }
 }
+/// Which chart occupies the plot area.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewKind {
+    #[default]
+    Line,
+    /// Distribution of the same samples, counted into watt bins.
+    Histogram,
+}
+impl ViewKind {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Line => Self::Histogram,
+            Self::Histogram => Self::Line,
+        }
+    }
+}
+
 pub struct View<'a> {
     pub history: &'a History,
     pub latest: Option<&'a Sample>,
@@ -100,6 +117,7 @@ pub struct View<'a> {
     pub help: bool,
     pub absolute: bool,
     pub step: bool,
+    pub view: ViewKind,
     pub theme: Theme,
     /// Durable line shown inside help (log/tray/rate summary plus last notice).
     pub status: &'a str,
@@ -118,10 +136,15 @@ pub struct View<'a> {
 pub struct PreparedHistory {
     segments: Vec<Vec<(f64, f64)>>,
     window: Stats,
+    /// Readings that would enter the distribution, and their bins once there are
+    /// enough of them. Collected only for the histogram view: sorting half a million
+    /// samples every sample is not free.
+    population: crate::histogram::Population,
+    pub bins: Option<crate::histogram::Bins>,
 }
 
 impl PreparedHistory {
-    pub fn new(history: &History, absolute: bool, step: bool) -> Self {
+    pub fn new(history: &History, absolute: bool, step: bool, view: ViewKind) -> Self {
         let mut segments: Vec<Vec<(f64, f64)>> = vec![vec![]];
         for s in &history.samples {
             let watts = s.watts.filter(|w| w.is_finite());
@@ -137,9 +160,19 @@ impl PreparedHistory {
                 segment.push((s.elapsed_s, w));
             }
         }
+        let population = if view == ViewKind::Histogram {
+            crate::histogram::Population::collect(history)
+        } else {
+            crate::histogram::Population::default()
+        };
+        let bins = (view == ViewKind::Histogram)
+            .then(|| crate::histogram::build(&population))
+            .flatten();
         Self {
             segments,
             window: history.window(),
+            population,
+            bins,
         }
     }
 }
@@ -161,6 +194,105 @@ fn fit_notice(text: &str, width: usize) -> String {
     out.extend(text.chars().skip(count.saturating_sub(tail)));
     out
 }
+/// Header line for the distribution: what was counted, into how many bins, and at
+/// what width, so the shape is never presented without its sample size.
+fn distribution_title(
+    bins: &crate::histogram::Bins,
+    population: &crate::histogram::Population,
+    width: u16,
+) -> String {
+    let scale = match bins.scale {
+        crate::histogram::Scale::Linear => format!("{} W wide", bins.step_label()),
+        crate::histogram::Scale::Log => "log-spaced".to_string(),
+    };
+    let mut title = format!(
+        " Distribution · n={} · {} bins · {scale}",
+        bins.n,
+        bins.bins()
+    );
+    if width >= 80 && population.excluded > 0 {
+        title.push_str(&format!(" · {} excluded", population.excluded));
+    }
+    title
+}
+
+/// Drawn by hand rather than with `GraphType::Bar`: ratatui marks the top of each
+/// bar with a single cell, which at nine bins reads as scatter, not percentage.
+fn distribution_lines(
+    bins: &crate::histogram::Bins,
+    area: Rect,
+    palette: Palette,
+    axes: Style,
+) -> Vec<Line<'static>> {
+    let count = bins.bins().max(1);
+    let gutter = 4; // "100%"
+    let plot_width = (area.width as usize).saturating_sub(gutter + 1).max(count);
+    // One blank column between bars keeps a stepped silhouette from reading as a
+    // single filled area; drop it when the terminal cannot spare the columns.
+    let gap = usize::from(plot_width >= count * 2 + count);
+    let bar = ((plot_width - gap * count.saturating_sub(1)) / count).max(1);
+    // The last row carries the bin edges, so the bars get the rest of the height.
+    let rows = (area.height as usize).saturating_sub(1).max(1);
+    let bar_style = Style::default().fg(palette.axes);
+    let top = bins.top_pct.max(1.0);
+    let mut lines = Vec::with_capacity(area.height as usize);
+    for row in 0..rows {
+        let tick = if row == 0 {
+            Some(bins.top_pct)
+        } else if row == rows / 2 {
+            Some(bins.top_pct / 2.0)
+        } else if row + 1 == rows {
+            Some(0.0)
+        } else {
+            None
+        };
+        let mut spans = vec![
+            Span::styled(
+                tick.map_or_else(|| " ".repeat(gutter), |tick| format!("{tick:>3.0}%")),
+                axes,
+            ),
+            Span::styled(if row + 1 == rows { "└" } else { "│" }, axes),
+        ];
+        for index in 0..count {
+            let cells = ((bins.percent(index) / top * rows as f64).round() as usize)
+                .max(usize::from(bins.counts[index] > 0));
+            let filled = bins.counts[index] > 0 && cells >= rows - row;
+            spans.push(Span::styled(
+                if filled {
+                    "█".repeat(bar)
+                } else {
+                    " ".repeat(bar)
+                },
+                bar_style,
+            ));
+            if gap > 0 && index + 1 < count {
+                spans.push(Span::raw(" "));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    // Bin edges: thin them out rather than let them overlap on a narrow terminal.
+    let mut edges = vec![' '; area.width as usize];
+    let shown = ((area.width as usize).saturating_sub(8) / 9)
+        .max(1)
+        .min(count);
+    for slot in 0..shown {
+        let index = if shown == 1 {
+            0
+        } else {
+            slot * (count - 1) / (shown - 1)
+        };
+        let start = gutter + 1 + index * (bar + gap) + bar.saturating_sub(1) / 2;
+        for (offset, ch) in bins.label(index).chars().enumerate() {
+            if let Some(cell) = edges.get_mut(start + offset) {
+                *cell = ch;
+            }
+        }
+    }
+    lines.push(Line::styled(edges.into_iter().collect::<String>(), axes));
+    lines
+}
+
 fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'static> {
     let (avg, min, max) = if absolute {
         (
@@ -185,7 +317,7 @@ fn stat_line(label: &str, s: &Stats, absolute: bool, palette: Palette) -> Line<'
     ])
 }
 pub fn draw(frame: &mut Frame, v: &View<'_>) {
-    let prepared = PreparedHistory::new(v.history, v.absolute, v.step);
+    let prepared = PreparedHistory::new(v.history, v.absolute, v.step, v.view);
     draw_prepared(frame, v, &prepared);
 }
 
@@ -427,35 +559,68 @@ pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory
         Constraint::Min(0),
     ])
     .split(rows[4]);
-    frame.render_widget(
-        Paragraph::new(format!(
+    // The distribution replaces the line chart in the same area: it answers a
+    // different question about the same samples, so the layout stays put.
+    let distribution = (v.view == ViewKind::Histogram)
+        .then_some(prepared.bins.as_ref())
+        .flatten();
+    let title = match (v.view, distribution) {
+        (ViewKind::Histogram, Some(bins)) => {
+            distribution_title(bins, &prepared.population, area.width)
+        }
+        (ViewKind::Histogram, None) => {
+            let population = &prepared.population;
+            if population.is_empty() && population.excluded > 0 {
+                // Charging, or a meter with no discharge flow: waiting quietly is the
+                // honest answer, and the count shows the key did something.
+                format!(
+                    " Distribution · no discharge readings yet ({} excluded)",
+                    population.excluded
+                )
+            } else {
+                format!(
+                    " Power / {} W   window {:.0}s   · collecting {}/{} for a distribution",
+                    if v.absolute { "magnitude" } else { "signed" },
+                    v.span,
+                    population.len(),
+                    crate::histogram::MIN_SAMPLES,
+                )
+            }
+        }
+        (ViewKind::Line, _) => format!(
             " Power / {} W{}   window {:.0}s",
             if v.absolute { "magnitude" } else { "signed" },
             if unavailable { " / historical" } else { "" },
             v.span
-        ))
-        .style(dim),
-        chart_rows[0],
-    );
-    frame.render_widget(
-        Chart::new(datasets)
-            .style(palette.style())
-            .x_axis(
-                Axis::default().style(axes).bounds(v.state.x).labels(
-                    v.state
-                        .x
-                        .map(|t| Line::styled(v.state.clock_label(t), axes)),
+        ),
+    };
+    frame.render_widget(Paragraph::new(title).style(dim), chart_rows[0]);
+    if let Some(bins) = distribution {
+        frame.render_widget(
+            Paragraph::new(distribution_lines(bins, chart_rows[1], palette, axes)),
+            chart_rows[1],
+        );
+    } else {
+        frame.render_widget(
+            Chart::new(datasets)
+                .style(palette.style())
+                .x_axis(
+                    Axis::default().style(axes).bounds(v.state.x).labels(
+                        v.state
+                            .x
+                            .map(|t| Line::styled(v.state.clock_label(t), axes)),
+                    ),
+                )
+                .y_axis(
+                    Axis::default()
+                        .title("W")
+                        .style(axes)
+                        .bounds(bounds)
+                        .labels(ticks.map(|t| Line::styled(format!("{t:.0}"), axes))),
                 ),
-            )
-            .y_axis(
-                Axis::default()
-                    .title("W")
-                    .style(axes)
-                    .bounds(bounds)
-                    .labels(ticks.map(|t| Line::styled(format!("{t:.0}"), axes))),
-            ),
-        chart_rows[1],
-    );
+            chart_rows[1],
+        );
+    }
     let mut stats = vec![
         stat_line("Window", &prepared.window, v.absolute, palette),
         stat_line("Session", &v.history.session, v.absolute, palette),
@@ -493,9 +658,9 @@ pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory
     frame.render_widget(Paragraph::new(stats), rows[6]);
     frame.render_widget(
         Paragraph::new(if area.width >= 100 {
-            " q quit · space pause · r reset · e export · l log · a signed/abs · s step · t theme · ? help"
+            " q quit · space pause · r reset · e export · l log · a sign · s step · g graph · t theme · ? help"
         } else if area.width >= 80 {
-            " q quit · space pause · r reset · e export · t theme · ? help"
+            " q quit · space pause · r reset · e export · g dist · t theme · ? help"
         } else {
             " q quit · space pause · t theme · ? help"
         })
@@ -573,7 +738,7 @@ pub fn draw_prepared(frame: &mut Frame, v: &View<'_>, prepared: &PreparedHistory
                 },
             );
         let content = format!(
-            "{status}\n\nBattery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nTheme: {theme} (session only)\nSession: since launch/reset; gaps separate epochs.\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export (one every 2s) · l log · a signed/magnitude · s step\nt/T next/previous theme · Esc dismiss notice / close help\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
+            "{status}\n\nBattery health / capacity\n{health}\n\nStatistics / estimates\n{analytics}\nETA: {}\nDrain: {} %/hr estimate\n\nTechnical details\n{diagnostic}\n\nDisplay: {} · window {:.0}s\nTheme: {theme} (session only)\nSession: since launch/reset; gaps separate epochs.\nControls\nspace freeze display (sampling/log/tray continue)\nr reset · e export (one every 2s) · l log · a signed/magnitude · s step\ng line chart / distribution (discharge only, percent per watt bin)\nt/T next/previous theme · Esc dismiss notice / close help\n? close · arrows/PgUp/PgDn scroll · Home/End · q quit",
             v.latest.map_or("—".into(), remaining_label),
             number(v.latest.filter(|_| !v.stale).and_then(|s| s.drain_pct_hr)),
             if v.absolute { "magnitude" } else { "signed" },

@@ -321,6 +321,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
     let mut help = false;
     let mut absolute = settings.absolute;
     let mut step = settings.step;
+    let mut view = ui::ViewKind::Line;
     let mut theme = settings.theme;
     let mut last_received = Instant::now();
     let mut frozen = 0.0;
@@ -411,6 +412,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                     frozen_view.as_ref().map_or(&history, |v| &v.0),
                     absolute,
                     step,
+                    view,
                 ));
             }
             if !paused {
@@ -435,6 +437,7 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                             help,
                             absolute,
                             step,
+                            view,
                             theme,
                             status: &banner,
                             notice: &status_row,
@@ -537,6 +540,10 @@ pub fn run(settings: Settings) -> Result<u8, String> {
                 }
                 KeyCode::Char('s') => {
                     step = !step;
+                    refresh.invalidate();
+                }
+                KeyCode::Char('g') => {
+                    view = view.toggled();
                     refresh.invalidate();
                 }
                 KeyCode::Esc => {
@@ -679,7 +686,12 @@ mod tests {
     fn paused_samples_and_theme_or_resize_requests_keep_prepared_history() {
         let history = History::new(Duration::from_secs(300), 60, Duration::from_secs(5), false);
         let mut refresh = DashboardRefresh {
-            prepared: Some(ui::PreparedHistory::new(&history, true, false)),
+            prepared: Some(ui::PreparedHistory::new(
+                &history,
+                true,
+                false,
+                ui::ViewKind::Line,
+            )),
             ..DashboardRefresh::default()
         };
         refresh.drawn(Instant::now());
@@ -690,7 +702,12 @@ mod tests {
         assert!(refresh.prepared.is_some());
         refresh.sample_received(false);
         assert!(refresh.prepared.is_none());
-        refresh.prepared = Some(ui::PreparedHistory::new(&history, true, false));
+        refresh.prepared = Some(ui::PreparedHistory::new(
+            &history,
+            true,
+            false,
+            ui::ViewKind::Line,
+        ));
         refresh.invalidate(); // Reset, pause/resume, signed/stepped mode changes.
         assert!(refresh.prepared.is_none());
         assert!(refresh.dirty);

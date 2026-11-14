@@ -150,7 +150,7 @@ fn synthetic_dashboard_renders_small_and_large_without_io() {
     use ratatui::{Terminal, backend::TestBackend};
     use wpm_cli::{
         cli::Theme,
-        ui::{View, draw},
+        ui::{View, ViewKind, draw},
     };
     let mut h = History::new(Duration::from_secs(300), 150, Duration::from_secs(2), false);
     let s = h.push(sample(0.0, Some(-12.4)));
@@ -167,6 +167,7 @@ fn synthetic_dashboard_renders_small_and_large_without_io() {
                         help: true,
                         absolute: false,
                         step: true,
+                        view: ViewKind::Line,
                         theme: Theme::Mono,
                         status: "synthetic",
                         notice: "",
@@ -321,7 +322,7 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
     use ratatui::{Terminal, backend::TestBackend};
     use wpm_cli::{
         cli::Theme,
-        ui::{View, draw},
+        ui::{View, ViewKind, draw},
     };
     let mut h = History::new(Duration::from_secs(300), 150, Duration::from_secs(2), false);
     let mut s = sample(0.0, Some(-27.1));
@@ -343,6 +344,7 @@ fn rendered_magnitude_axis_and_poll_labels_are_truthful() {
                     help: false,
                     absolute: true,
                     step: false,
+                    view: ViewKind::Line,
                     theme: Theme::Mono,
                     status: "2s",
                     notice: "",
