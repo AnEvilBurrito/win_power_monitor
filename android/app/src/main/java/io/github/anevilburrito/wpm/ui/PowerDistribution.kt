@@ -109,10 +109,23 @@ data class PowerDistribution(
     /** Unit for the whole histogram, chosen once from the final edges. */
     fun axisUnit(): PowerUnit = Units.axisUnit(edges.first(), edges.last())
 
-    /** Tick text for a lower bin edge, with the precision the step actually needs. */
+    /**
+     * Tick text for a lower bin edge.
+     *
+     * A linear axis has one constant step, so the step's own precision is right for
+     * every label. A log axis has no constant step: a difference-based rule prints
+     * `0.0631` / `0.1585` for decade-spaced edges, which is noise on a phone. Log
+     * labels therefore keep [LOG_LABEL_DIGITS] significant digits instead:
+     * `0.063`, `0.16`, `0.4`, `1`, `2.5`, `6.3`.
+     */
     fun binLabel(index: Int, unit: PowerUnit): String {
-        val displayStep = step() * unit.perWatt
-        return trimZeros(fixed(edges[index] * unit.perWatt, decimals(displayStep)))
+        val display = edges[index] * unit.perWatt
+        return when (scale) {
+            DistributionScale.LINEAR ->
+                trimZeros(fixed(display, decimals(step() * unit.perWatt)))
+            DistributionScale.LOG ->
+                trimZeros(fixed(display, significantDecimals(display, LOG_LABEL_DIGITS)))
+        }
     }
 
     /** Bin width as text for the header: `0.75 W`, `250 mW`, or `log-spaced`. */
@@ -324,6 +337,16 @@ private fun logEdges(low: Double, high: Double): Pair<List<Double>, Distribution
     val bins = ceil(span / step).toInt().coerceIn(DISTRIBUTION_MIN_BINS, DISTRIBUTION_MAX_BINS)
     val edges = (0..bins).map { index -> 10.0.pow(start + step * index) }
     return edges to DistributionScale.LOG
+}
+
+/** Decimals a log-axis edge label keeps, i.e. two significant digits at most. */
+private const val LOG_LABEL_DIGITS = 2
+
+/** Decimals that render [digits] significant figures of [value],, capped for sanity. */
+private fun significantDecimals(value: Double, digits: Int): Int {
+    if (!value.isFinite() || value == 0.0) return 0
+    val exponent = floor(log10(abs(value))).toInt()
+    return (digits - 1 - exponent).coerceIn(0, 4)
 }
 
 private fun binCount(start: Double, high: Double, step: Double): Int {

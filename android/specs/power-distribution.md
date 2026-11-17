@@ -130,10 +130,10 @@ positive wattage in both display scales.
 ## 5. Presentation
 
 **Status: implemented.** The pure model is `ui/PowerDistribution.kt` with
-`ui/PowerDistributionTest.kt` (20 cases, fixture copied from `src/histogram.rs`); the
+`ui/PowerDistributionTest.kt` (21 cases, fixture copied from `src/histogram.rs`); the
 view is `DistributionChart` in `ui/PowerChart.kt`; the switch is `ChartViewToggle` in
 `ui/MonitorScreen.kt`; the selection is `WpmViewModel.chartView`. One deviation from
-§5.3 is recorded there. `testDebugUnitTest`: 559 tests, 0 failures.
+§5.3 is recorded there. `testDebugUnitTest`: 560 tests, 0 failures.
 
 ### 5.1 Placement: replace the line chart in place
 
@@ -280,6 +280,14 @@ duplicates it.
   `step · unit.perWatt`: a 0.75 W step → 2 decimals → `3`, `3.75`, `4.5`; a 250 mW
   step → 0 decimals → `0`, `250`, `500`; a 0.001 W step in µW → `0`…`1000` is
   prevented by the unit choice, not by extra decimals.
+- **Log axes label by significant digits, not by the edge difference** (Android
+  change, verified on a phone). A log axis has no constant step, so the desktop's
+  difference-based rule prints `0.0631 / 0.1585 / 0.3981 / 1 / 2.5119 / 6.3096` —
+  four decimals of noise under a 44dp axis. Log labels therefore keep two
+  significant digits, trimmed: `0.063`, `0.16`, `0.4`, `1`, `2.5`, `6.3`. Linear
+  axes keep the step rule above, where one width really does describe every label.
+  The tooltip reuses the same labels, so it stays terse too; the header still says
+  `log-spaced` because there is no single width to state.
 - The header bin width uses the same pair: `0.75 W wide`, `250 mW wide`.
 - The percent axis is unit-free and never scaled.
 

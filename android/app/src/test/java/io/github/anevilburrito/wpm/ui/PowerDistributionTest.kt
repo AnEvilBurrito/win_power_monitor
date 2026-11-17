@@ -332,6 +332,51 @@ class PowerDistributionTest {
         assertEquals("8.25\u20139 W \u00b7 0 readings \u00b7 0%", distribution.binDetail(7, unit))
     }
 
+    /**
+     * The phone case that produced `0.0631 / 0.1585 / 0.3981`: a Wi-Fi-scale session
+     * spanning a decade, log-binned from 63 mW to 6.3 W.
+     */
+    @Test
+    fun aLogAxisLabelsBySignificantDigitsNotByTheEdgeDifference() {
+        val spread = (0 until 60).map { index ->
+            sample(index * 5_000L, -(Math.pow(10.0, -1.2 + index * 0.02)))
+        }
+        val distribution = distributionOf(spread)!!
+        assertEquals(DistributionScale.LOG, distribution.scale)
+        val unit = distribution.axisUnit()
+        val labels = (0..distribution.bins()).map { distribution.binLabel(it, unit) }
+        // Two significant digits at most, and never a four-decimal string.
+        labels.forEach { label ->
+            val fraction = label.substringAfter('.', "")
+            assertTrue("more than three decimals in $label", fraction.length <= 3)
+            val significant = label.filter { it.isDigit() }.trimStart('0').length
+            assertTrue("more than two significant digits in $label", significant <= 2)
+        }
+        // The fixture lands on 0.1-decade edges from 10^-1.2 to 1 W.
+        assertEquals("0.063", labels[0])
+        assertEquals("0.079", labels[1])
+        assertEquals("0.1", labels[2])
+        assertEquals("0.16", labels[4])
+        assertEquals("0.4", labels[8])
+        assertEquals("1", labels.last())
+        // The phone's screenshot case: decade-spaced edges read terse, not `0.1585`.
+        assertEquals("0.16", labelFor(0.1585, unit = PowerUnit.WATTS))
+        assertEquals("0.79", labelFor(0.7943, unit = PowerUnit.WATTS))
+        // The tooltip reuses the same labels, so it stays terse as well.
+        assertTrue(distribution.binRangeLabel(0, unit).startsWith("0.063\u20130.079"))
+    }
+
+    /** Label text a log axis would give a single edge, via the published distribution. */
+    private fun labelFor(watts: Double, unit: PowerUnit): String {
+        val spread = (0 until 60).map { index ->
+            sample(index * 5_000L, -(Math.pow(10.0, -1.2 + index * 0.02)))
+        }
+        val distribution = distributionOf(spread)!!
+        val index = distribution.edges.indexOfFirst { abs(it - watts) < 1e-3 }
+        assertTrue("no edge at $watts", index >= 0)
+        return distribution.binLabel(index, unit)
+    }
+
     @Test
     fun aTapMapsToTheBarUnderIt() {
         assertEquals(0, binIndexAt(0.0f, 9))
