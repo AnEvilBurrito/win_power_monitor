@@ -130,10 +130,10 @@ positive wattage in both display scales.
 ## 5. Presentation
 
 **Status: implemented.** The pure model is `ui/PowerDistribution.kt` with
-`ui/PowerDistributionTest.kt` (18 cases, fixture copied from `src/histogram.rs`); the
+`ui/PowerDistributionTest.kt` (20 cases, fixture copied from `src/histogram.rs`); the
 view is `DistributionChart` in `ui/PowerChart.kt`; the switch is `ChartViewToggle` in
 `ui/MonitorScreen.kt`; the selection is `WpmViewModel.chartView`. One deviation from
-§5.3 is recorded there. `testDebugUnitTest`: 557 tests, 0 failures.
+§5.3 is recorded there. `testDebugUnitTest`: 559 tests, 0 failures.
 
 ### 5.1 Placement: replace the line chart in place
 
@@ -285,17 +285,22 @@ duplicates it.
 
 ### 5.7 Touch behaviour
 
-- No per-bar tooltip in this milestone. A 14-bin plot on a 320dp phone gives ~20dp
-  per bar, far below the 48dp minimum touch target this project holds everywhere
-  (`initial-implementation.md:45`), and a tooltip would be the only surface where
-  a count is reachable only by touching a target too small to hit.
-- Instead: the whole plot is one accessibility node with a
-  `contentDescription` that states the population and the peak (§9), and every
-  number is also visible as text (header `n`/bins/width/exclusions, percent axis,
-  legend). Touch does nothing on the bars, so no accidental state change is
-  possible.
-- A future tooltip would need a ≥48dp target, which means a bin-index chip row,
-  not a bar hit test. Out of scope.
+**Implemented.** Tapping the plot selects the bar under the finger: its span, count and
+share appear as text (`4.5–5.25 W · 18 readings · 30%`), the bar is outlined and drawn
+in the text colour, and tapping the same bar again clears the selection. The
+selection is dropped when the population changes, so it can never describe a
+different bin after a new poll or a window change.
+
+- The **whole plot** is the touch target (it is always ≥48dp tall), so this does not
+  introduce the sub-48dp hit area the earlier draft of this document rejected.
+  Accuracy at the edges is irrelevant: [binIndexAt] clamps out-of-range taps to the
+  first/last bar instead of doing nothing.
+- Accessibility: the selected detail is also the plot node's `stateDescription`, and
+  an accessibility *activation* cycles through the bins (`Show next bin`), so a screen
+  reader user never has to aim at a ~20dp bar. Every number remains visible as text
+  in the header, the percent axis, the tooltip and the legend.
+- The hit test is a pure function in the model (`binIndexAt(xFraction, bins)`), unit
+  tested for every bar index rather than inferred from pixel geometry.
 
 ## 6. Interaction with existing controls
 
@@ -503,9 +508,13 @@ Not changed:
 
 ## 11. Review questions
 
-1. Is the window-scoped population (§6.1) acceptable, or should the distribution
-   count the whole session like the desktop does?
-2. Is one toggle enough, or does a two-segment `Line | Distribution` control read
-   better at the cost of the extra toolbar width budget in §5.2?
-3. Should the exclusion count appear on every width instead of being the first
-   tier to drop (§5.3)?
+Answered and implemented:
+
+1. **Window-scoped population (§6.1): accepted.** The chips are a persistent scope
+   control on this screen, so they keep meaning in both views.
+2. **One labelled toggle, not a two-segment `Line | Distribution` control: accepted.**
+   It costs 88dp of the toolbar budget instead of a segment pair, and the label names
+   the view the tap will switch to.
+3. **Exclusion count: may drop first on narrow widths.** Tiers 2-4 keep `n`, bin count
+   and bin width, which are the numbers that make the shape honest; the legend repeats
+   the exclusion count on every width anyway.

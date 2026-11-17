@@ -1,6 +1,8 @@
 package io.github.anevilburrito.wpm.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,10 +17,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -28,10 +34,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -269,6 +278,11 @@ private val DistributionHeaderHeight = 14.dp
  *
  * Nothing here animates or polls: the bins are a pure function of the sample list,
  * computed once per list change.
+ *
+ * Tapping a bar selects it and shows its span, count and share; the selection is
+ * also exposed as the plot's state description and can be cycled with an
+ * accessibility activation, so no detail is reachable only by hitting a ~20dp
+ * target. Tapping the selected bar again clears it.
  */
 @Composable
 fun DistributionChart(
@@ -283,6 +297,9 @@ fun DistributionChart(
         val plotWidthDp = (maxWidth - AxisWidth).value.roundToInt()
         val population = remember(samples) { distributionPopulation(samples) }
         val distribution = remember(population) { buildDistribution(population) }
+        // A new population invalidates the previous bar index, so a stale selection
+        // can never describe different bins.
+        var selected by remember(distribution) { mutableStateOf<Int?>(null) }
         val headerTiers = remember(distribution, population) {
             distributionHeaderTiers(distribution, population)
         }
@@ -304,6 +321,12 @@ fun DistributionChart(
         }
         val description = remember(distribution) {
             distribution?.accessibilityDescription() ?: "Power distribution: collecting readings"
+        }
+        val unit = distribution?.axisUnit()
+        val selectedDetail = if (distribution != null && unit != null && selected != null) {
+            distribution.binDetail(selected!!, unit)
+        } else {
+            null
         }
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -333,9 +356,28 @@ fun DistributionChart(
                     Canvas(
                         Modifier
                             .fillMaxSize()
-                            .semantics { contentDescription = description },
+                            .pointerInput(distribution) {
+                                if (distribution == null) return@pointerInput
+                                detectTapGestures { offset ->
+                                    val width = size.width.toFloat()
+                                    if (width <= 0f) return@detectTapGestures
+                                    val hit = binIndexAt(offset.x / width, distribution.bins())
+                                    selected = if (hit == selected) null else hit
+                                }
+                            }
+                            .semantics {
+                                contentDescription = description
+                                // Screen readers cannot aim at a ~20dp bar, so the same
+                                // selection is reachable by activation.
+                                onClick(label = "Show next bin") {
+                                    val bins = distribution?.bins() ?: return@onClick false
+                                    selected = ((selected ?: -1) + 1).mod(bins)
+                                    true
+                                }
+                                if (selectedDetail != null) stateDescription = selectedDetail
+                            },
                     ) {
-                        if (distribution != null) drawBins(distribution, colors)
+                        if (distribution != null) drawBins(distribution, colors, selected)
                     }
                     Text(
                         text = header,
@@ -350,6 +392,24 @@ fun DistributionChart(
                             .height(DistributionHeaderHeight)
                             .padding(start = 2.dp),
                     )
+                    if (selectedDetail != null) {
+                        // Tooltip: the selected bar's span, count and share, as text so
+                        // it is readable, copyable and never colour-only.
+                        Text(
+                            text = selectedDetail,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            color = colors.text,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = DistributionHeaderHeight)
+                                .background(colors.surface.copy(alpha = 0.92f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .testTag("distribution-tooltip"),
+                        )
+                    }
                 }
             }
             Row(
@@ -435,7 +495,11 @@ private fun BinEdgeLabels(
  * between bars while the plot can spare it, and an empty bin draws nothing because
  * the hole is data.
  */
-private fun DrawScope.drawBins(distribution: PowerDistribution, colors: WpmColors) {
+private fun DrawScope.drawBins(
+    distribution: PowerDistribution,
+    colors: WpmColors,
+    selected: Int? = null,
+) {
     val width = size.width
     val height = size.height
     if (width <= 0f || height <= 0f) return
@@ -463,9 +527,20 @@ private fun DrawScope.drawBins(distribution: PowerDistribution, colors: WpmColor
         val barHeight = (plotHeight * ratio).toFloat()
         if (barHeight <= 0f) return@forEachIndexed
         drawRect(
-            color = colors.trace,
+            color = if (index == selected) colors.text else colors.trace,
             topLeft = Offset(index * slot + gapPx / 2f, height - barHeight),
             size = Size(barWidth, barHeight),
+        )
+    }
+    // The selected bar keeps a visible outline even when it is only a few pixels tail,
+    // so the tap that produced the tooltip is always answered on the plot itself.
+    if (selected != null && selected in distribution.counts.indices) {
+        val left = selected * slot + gapPx / 2f
+        drawRect(
+            color = colors.text.copy(alpha = 0.7f),
+            topLeft = Offset(left, plotTop),
+            size = Size(barWidth, plotHeight),
+            style = Stroke(width = 1.dp.toPx()),
         )
     }
 }

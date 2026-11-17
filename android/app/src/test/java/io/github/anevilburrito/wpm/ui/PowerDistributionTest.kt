@@ -319,4 +319,31 @@ class PowerDistributionTest {
 
     private fun ceiling(peak: Double): Double =
         DISTRIBUTION_NICE_PERCENT.firstOrNull { it >= peak } ?: 100.0
+
+    @Test
+    fun aBarReportsItsSpanCountAndShare() {
+        val distribution = distributionOf(session())!!
+        val unit = distribution.axisUnit()
+        assertEquals("3.75\u20134.5 W", distribution.binRangeLabel(1, unit))
+        assertEquals("3.75\u20134.5 W \u00b7 21 readings \u00b7 35%", distribution.binDetail(1, unit))
+        // Singular, so a one-reading bar never says "1 readings".
+        assertEquals("9\u20139.75 W \u00b7 1 reading \u00b7 2%", distribution.binDetail(8, unit))
+        // An empty bar is still readable: the hole in the silhouette is data.
+        assertEquals("8.25\u20139 W \u00b7 0 readings \u00b7 0%", distribution.binDetail(7, unit))
+    }
+
+    @Test
+    fun aTapMapsToTheBarUnderIt() {
+        assertEquals(0, binIndexAt(0.0f, 9))
+        assertEquals(0, binIndexAt(0.11f, 9))
+        assertEquals(4, binIndexAt(0.5f, 9))
+        assertEquals(8, binIndexAt(1.0f, 9))
+        assertEquals(8, binIndexAt(1.4f, 9))
+        assertEquals(0, binIndexAt(-0.2f, 9))
+        assertNull(binIndexAt(0.5f, 0))
+        // Every bar is reachable, and never two indices for one position.
+        for (index in 0 until 14) {
+            assertEquals(index, binIndexAt((index + 0.5f) / 14f, 14))
+        }
+    }
 }

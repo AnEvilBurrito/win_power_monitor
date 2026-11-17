@@ -124,6 +124,23 @@ data class PowerDistribution(
         DistributionScale.LOG -> "log-spaced"
     }
 
+    /** One bin's wattage span, e.g. `4.5-5.25 W`; both edges share the step precision. */
+    fun binRangeLabel(index: Int, unit: PowerUnit): String =
+        "${binLabel(index, unit)}\u2013${binLabel(index + 1, unit)} ${unit.suffix}"
+
+    /**
+     * Everything one bar means, in one line: its span, how many readings landed in
+     * it and what share of the counted population that is.
+     *
+     * This is the tooltip text *and* the accessible description of a selected bar,
+     * so the detail is never reachable only by touching a target too small to hit.
+     */
+    fun binDetail(index: Int, unit: PowerUnit): String {
+        val readings = counts[index]
+        val noun = if (readings == 1) "reading" else "readings"
+        return "${binRangeLabel(index, unit)} \u00b7 $readings $noun \u00b7 ${percentLabel(percent(index))}"
+    }
+
     /**
      * One accessible sentence for the whole plot. Every number is also drawn as
      * text, so this is a summary rather than the only way to read the chart.
@@ -248,8 +265,7 @@ fun distributionPlaceholder(
     else -> "Needs $DISTRIBUTION_MIN_SAMPLES discharge readings"
 }
 
-/** Indices of the bin edges that get a label at [plotWidthDp]. */
-fun distributionLabelIndices(binCount: Int, plotWidthDp: Int): List<Int> {
+/** Indices of the bin edges that get a label at [plotWidthDp]. */fun distributionLabelIndices(binCount: Int, plotWidthDp: Int): List<Int> {
     if (binCount <= 0) return emptyList()
     val shown = (plotWidthDp / DISTRIBUTION_LABEL_SLOT_DP).coerceIn(1, binCount)
     if (shown == 1) return listOf(0)
@@ -409,6 +425,19 @@ private tailrec fun greatestCommonDivisor(a: Long, b: Long): Long =
 
 /** Percent axis tick text: whole percentages, the same `{:>3.0}%` rule as the desktop. */
 fun percentLabel(percent: Double): String = "${round(percent).toInt()}%"
+
+/**
+ * Bin under a horizontal position in the plot, or null when there is nothing to hit.
+ *
+ * [xFraction] is the tap position divided by the plot width, so the composable does
+ * not need to know the pixel geometry and the hit test is unit tested here.
+ */
+fun binIndexAt(xFraction: Float, bins: Int): Int? {
+    if (bins <= 0 || !xFraction.isFinite()) return null
+    if (xFraction < 0f) return 0
+    if (xFraction >= 1f) return bins - 1
+    return (xFraction * bins).toInt().coerceIn(0, bins - 1)
+}
 
 /** Kept for callers that build a distribution from a sample list directly. */
 fun distributionFor(samples: List<BatterySample>, windowSeconds: Int): PowerDistribution? =
