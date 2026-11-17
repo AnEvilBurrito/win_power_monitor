@@ -1,0 +1,709 @@
+<!doctype html>
+<!--
+  WPM / Android UI study 02 — power distribution (histogram).
+
+  DESIGN REVIEW ARTIFACT ONLY.
+  - Every reading, bin count and percentage on this page is synthetic and
+    hand-authored. Nothing is measured, polled or fetched.
+  - No server, no network request, no external font/script/stylesheet, no build.
+    The file opens directly from disk in a browser.
+  - This is not the Android implementation and is not intended to ship inside a
+    WebView. The app stays native Compose; this page only reviews layout.
+  - Numbers mirror the ported constants in android/specs/power-distribution.md
+    (MIN_SAMPLES 8, MIN_BINS 6, MAX_BINS 14, LOG_SUPPORT_RATIO 10,
+    NICE_PERCENT 5..100, STEP_LADDER 1..10 with 7.5, FD width + quantum snap).
+    The linear fixture is the 60-reading reference session pinned by
+    src/histogram.rs::the_real_session_lands_on_readable_bins:
+    9 bins of 0.75 W from 3.0 W, counts 2/21/18/8/5/3/2/0/1, peak 35% -> 40% axis.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WPM / Android UI study 02 — power distribution</title>
+<style>
+  :root {
+    --board-bg: #f4f4f1;
+    --board-ink: #202735;
+    --board-muted: #5a6472;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    color-scheme: light;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--board-bg); color: var(--board-ink); }
+
+  /* Palette roles mirror ui/WpmTheme.kt and design/mobile-mockup.css exactly. */
+  [data-theme="storm"] {
+    --bg: #24283b; --surface: #2b3046; --text: #c0caf5; --muted: #a9b1d6;
+    --rule: #565f89; --trace: #7dcfff; --charge: #9ece6a; --discharge: #e0af68;
+    --warning: #ff9e64; --low: #ff8797; --scheme: dark;
+  }
+  [data-theme="mocha"] {
+    --bg: #1e1e2e; --surface: #262638; --text: #cdd6f4; --muted: #bac2de;
+    --rule: #6c7086; --trace: #94e2d5; --charge: #a6e3a1; --discharge: #f9e2af;
+    --warning: #fab387; --low: #ff8797; --scheme: dark;
+  }
+  [data-theme="latte"] {
+    --bg: #eff1f5; --surface: #e6e9ef; --text: #4c4f69; --muted: #5c5f77;
+    --rule: #8c8fa1; --trace: #007f8b; --charge: #38751d; --discharge: #986900;
+    --warning: #c3440b; --low: #b91c35; --scheme: light;
+  }
+  [data-theme="mono"] {
+    --bg: #171717; --surface: #222222; --text: #f0f0f0; --muted: #c0c0c0;
+    --rule: #808080; --trace: #f0f0f0; --charge: #f0f0f0; --discharge: #f0f0f0;
+    --warning: #f0f0f0; --low: #f0f0f0; --scheme: dark;
+  }
+
+  header.review {
+    max-width: 1980px; margin: 0 auto; padding: 26px 24px 18px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px 22px;
+    border-bottom: 1px solid #d4d8db;
+  }
+  .wordmark { font: 700 23px var(--mono); letter-spacing: -1px; }
+  .wordmark span { font: 400 13px var(--mono); letter-spacing: 0; margin-left: 10px; color: var(--board-muted); }
+  .review-label { font: 10px var(--mono); letter-spacing: 1px; color: var(--board-muted); }
+  .palette-control { margin-left: auto; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .palette-control select { font: inherit; font-weight: 400; min-height: 34px; padding: 0 8px; border: 1px solid #bec4cc; border-radius: 7px; background: #fafaf8; color: var(--board-ink); }
+
+  .board { max-width: 1980px; margin: 0 auto; padding: 22px 24px 8px; overflow-x: auto; }
+  .row { display: flex; gap: 22px; align-items: flex-start; margin-bottom: 22px; }
+  .row.wrap { flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { font: 10px/1.5 var(--mono); color: var(--board-muted); padding-top: 8px; max-width: 100%; }
+
+  /* ---- phone shells -------------------------------------------------- */
+  .phone {
+    position: relative; display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg); color: var(--text); color-scheme: var(--scheme);
+    border: 6px solid #161b26; border-radius: 26px;
+    box-shadow: 0 12px 28px #11182714, 0 2px 5px #11182710;
+  }
+  .phone.portrait { width: 390px; height: 700px; border-radius: 30px; }
+  .phone.landscape { width: 880px; height: 452px; border-radius: 18px; }
+
+  .sysbar { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--muted); padding: 7px 15px 3px; }
+  .appbar { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border-bottom: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); }
+  .appbar .brand { font: 700 19px var(--mono); letter-spacing: -1px; }
+  .appbar .prompt { color: var(--trace); }
+  .appbar .sub { font: 9px var(--mono); letter-spacing: 1px; color: var(--muted); }
+  .appbar .grow { flex: 1; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--trace); display: inline-block; }
+  .state-word { font: 10px var(--mono); color: var(--text); }
+  .gear { width: 34px; height: 34px; display: grid; place-items: center; color: var(--muted); font-size: 15px; }
+
+  /* ---- portrait body ------------------------------------------------- */
+  .scroll { flex: 1; min-height: 0; padding: 4px 18px 0; }
+  .statusline { display: flex; justify-content: space-between; gap: 10px; font: 10px var(--mono); color: var(--muted); padding: 8px 0 6px; }
+  .statusline .left { color: var(--text); display: flex; align-items: center; gap: 6px; }
+  .caption { font: 9px var(--mono); color: var(--muted); padding-top: 4px; }
+  .reading { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+  .number { font: 500 44px/1.12 var(--mono); letter-spacing: -2px; white-space: nowrap; }
+  .number .unit { font: 400 18px var(--mono); letter-spacing: 0; color: var(--muted); padding-left: 6px; }
+  .battery { display: flex; flex-direction: column; align-items: flex-end; font: 20px/1.1 var(--mono); }
+  .battery span { font: 9px var(--mono); color: var(--muted); }
+  .flowline { display: flex; justify-content: space-between; gap: 8px; font: 11px var(--mono); padding-top: 10px; }
+  .flowline .discharge { color: var(--discharge); }
+  .flowline .electrical { color: var(--muted); }
+  .readiness { font: 9px var(--mono); color: var(--muted); padding: 3px 0 0; }
+  .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 14px; }
+  .chart-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .chart-head .unit-note { font: 10px var(--mono); color: var(--muted); font-weight: 400; }
+  .switch { display: flex; align-items: center; gap: 7px; font: 10px var(--mono); color: var(--muted); }
+  .track { width: 34px; height: 18px; border-radius: 9px; background: var(--rule); position: relative; }
+  .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); }
+  .switch[data-on="true"] .track { background: var(--trace); }
+  .switch[data-on="true"] .track::after { left: 18px; }
+  .switch[data-on="true"] { color: var(--text); }
+
+  .controls { display: flex; align-items: center; gap: 6px; min-height: 42px; padding: 6px 0 2px; }
+  .chips { display: flex; gap: 2px; }
+  .chip { min-width: 44px; min-height: 34px; display: grid; place-items: center; font: 11px var(--mono); color: var(--muted); border-radius: 6px; }
+  .chip[data-selected="true"] { background: var(--surface); color: var(--text); box-shadow: inset 0 -2px var(--trace); }
+  .segrow { display: flex; align-items: center; gap: 4px; }
+  .toggle { min-height: 34px; min-width: 88px; padding: 0 9px; display: grid; place-items: center; border-radius: 7px; font: 10px var(--mono); color: var(--muted); background: transparent; }
+  .toggle[data-on="true"] { color: var(--trace); background: var(--surface); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--trace) 45%, transparent); }
+  .freeze { display: flex; align-items: center; gap: 5px; font: 10px var(--mono); color: var(--muted); padding: 0 4px; }
+  .spacer { flex: 1; }
+
+  /* ---- plot ---------------------------------------------------------- */
+  .plot { display: flex; flex-direction: column; padding-top: 3px; }
+  .plot.portrait-plot { height: 184px; }
+  .plot.landscape-plot { flex: 1; min-height: 160px; }
+  .hist { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .plot-row { display: flex; flex: 1; min-height: 0; }
+  /* Value-axis gutter: percent for the distribution, watts for the line chart. */
+  .pct-axis { width: 44px; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding-right: 4px; font: 9px var(--mono); color: var(--muted); }
+  .bars-wrap { position: relative; flex: 1; border-left: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); }
+  .gridlines { position: absolute; inset: 0; pointer-events: none; }
+  .gridlines i { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid color-mix(in srgb, var(--rule) 45%, transparent); }
+  .gridlines i.zero { border-top-color: color-mix(in srgb, var(--muted) 75%, transparent); }
+  .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; padding: 0 1px; }
+  .bar { flex: 1; min-width: 2px; background: var(--trace); opacity: .92; }
+  .bar.empty { background: none; }
+  .placeholder { position: absolute; inset: 0; display: grid; place-items: center; font: 11px var(--mono); color: var(--muted); text-align: center; padding: 0 12px; }
+  .edges-row { display: flex; height: 16px; align-items: center; }
+  .edges { position: relative; flex: 1; height: 16px; }
+  .edges span { position: absolute; top: 2px; font: 9px var(--mono); color: var(--muted); white-space: nowrap; transform: translateX(-50%); }
+  .legend { display: flex; justify-content: space-between; gap: 10px; font: 9px var(--mono); color: var(--muted); padding-top: 6px; }
+  .legend .left { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 9px; height: 9px; background: var(--trace); display: inline-block; }
+
+  /* line chart frame */
+  .linechart { display: block; width: 100%; height: auto; }
+  .linechart .grid { stroke: var(--rule); stroke-width: .7; fill: none; opacity: .8; }
+  .linechart .zero { stroke: var(--muted); stroke-width: 1.2; fill: none; }
+  .linechart .trace { fill: none; stroke: var(--trace); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .linechart .gap { fill: var(--surface); }
+  .linechart text { font: 9px var(--mono); fill: var(--muted); }
+
+  /* ---- portrait footer, landscape strip and deck --------------------- */
+  .stats { display: flex; gap: 8px; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); margin-top: 12px; padding-top: 10px; }
+  .stats > div { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+  .stats span { font: 10px var(--mono); color: var(--muted); }
+  .stats strong { font: 13px var(--mono); font-weight: 400; white-space: nowrap; }
+  .stats strong small { font-size: 9px; color: var(--muted); }
+  .session-link { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); margin-top: 10px; padding-top: 9px; font: 10px var(--mono); color: var(--muted); }
+  .session-link strong { color: var(--text); font-weight: 400; }
+  .mode-note { display: flex; gap: 8px; padding-top: 9px; font-size: 10px; color: var(--muted); line-height: 1.45; }
+  .mode-note strong { display: block; color: var(--text); font-weight: 600; }
+  .stop-row { padding: 8px 18px 4px; }
+  .stop-button { width: 100%; min-height: 40px; border: 1px solid color-mix(in srgb, var(--rule) 80%, transparent); border-radius: 8px; display: grid; place-items: center; font: 12px var(--mono); color: var(--text); background: transparent; }
+  .nav { display: flex; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); }
+  .nav > div { flex: 1; min-height: 46px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 9px var(--mono); color: var(--muted); }
+  .nav > div[data-current="true"] { color: var(--trace); }
+  .nav .glyph { font-size: 14px; line-height: 1; }
+
+  .strip { display: flex; gap: 14px; align-items: center; min-height: 56px; padding: 0 12px; }
+  .strip .reading { flex: 1.2; }
+  .strip .number { font-size: 30px; }
+  .strip .flowcell { flex: 1; display: flex; flex-direction: column; gap: 2px; font: 10px var(--mono); }
+  .strip .flowcell .muted { color: var(--muted); }
+  .strip .stats { flex: 1.4; border: 0; margin: 0; padding: 0; gap: 6px; }
+  .strip .stats strong { font-size: 12px; }
+  .toolbar { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 12px; }
+  .toolbar .label { min-width: 132px; }
+  .toolbar .label h2 { margin: 0; font-size: 12px; font-weight: 600; }
+  .toolbar .label .sub2 { font: 9px var(--mono); color: var(--muted); }
+  .chart-area { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px; }
+  .deck { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 8px; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); }
+  .deck .navrow { display: flex; gap: 4px; flex: 1.5; }
+  .deck .navrow > div { flex: 1; min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 5px; font: 10px var(--mono); color: var(--muted); }
+  .deck .navrow > div[data-current="true"] { color: var(--trace); }
+  .deck .session { flex: 1; display: flex; flex-direction: column; font: 10px var(--mono); color: var(--muted); }
+  .deck .session strong { color: var(--text); font-weight: 400; }
+  .deck .stop { min-width: 74px; min-height: 34px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--rule) 80%, transparent); border-radius: 7px; font: 11px var(--mono); color: var(--text); }
+
+  /* ---- review notes -------------------------------------------------- */
+  .notes { width: 520px; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: #fff; border: 1px solid #dfe3e6; border-radius: 12px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 8px; font-size: 13px; }
+  .card p, .card li { font-size: 12px; line-height: 1.55; color: #3b4553; margin: 0 0 8px; }
+  .card ul { margin: 0; padding-left: 18px; }
+  .card code { font: 11px var(--mono); background: #f1f3f4; padding: 1px 4px; border-radius: 4px; }
+  footer.review { max-width: 1980px; margin: 0 auto; padding: 12px 24px 34px; font-size: 11px; color: var(--board-muted); }
+</style>
+</head>
+<body>
+
+<header class="review">
+  <div class="wordmark">wpm<span>/ android</span></div>
+  <div class="review-label">UI STUDY 02 — POWER DISTRIBUTION — NOT A WORKING APP</div>
+  <div class="palette-control">
+    <label for="palette">Palette</label>
+    <select id="palette">
+      <option value="mixed" selected>Design default (Storm + Latte)</option>
+      <option value="storm">Tokyo Night Storm</option>
+      <option value="latte">Catppuccin Latte · light</option>
+      <option value="mocha">Catppuccin Mocha</option>
+      <option value="mono">Monochrome</option>
+    </select>
+  </div>
+</header>
+
+<main class="board">
+
+  <!-- Row 1: the two portrait compositions. -->
+  <div class="row">
+    <figure>
+      <div class="phone portrait" data-theme="storm">
+        <div class="sysbar"><span>9:41</span><span>▴ ▴ ▰</span></div>
+        <div class="appbar">
+          <span class="brand">wpm<span class="prompt">_</span></span><span class="sub">BATTERY FLOW</span>
+          <span class="grow"></span><span class="gear">⚙</span>
+        </div>
+        <div class="scroll">
+          <div class="statusline"><span class="left"><i class="dot"></i>Recording</span><span>Sample 2s ago</span></div>
+          <div class="caption">Power &amp; current · latest reading</div>
+          <div class="reading">
+            <div class="number">4.80<span class="unit">W</span></div>
+            <div class="battery">68<span>%</span><span>battery</span></div>
+          </div>
+          <div class="flowline"><span class="discharge">↓ Discharging</span><span class="electrical">4.02 V / 1.194 A</span></div>
+          <div class="readiness">From the latest calibrated reading</div>
+
+          <div class="chart-head">
+            <h2>Power <span class="unit-note">/ W</span></h2>
+            <div class="switch" data-on="true"><span>Absolute scale</span><i class="track"></i></div>
+          </div>
+          <div class="controls">
+            <div class="chips">
+              <div class="chip">5m</div><div class="chip" data-selected="true">30m</div><div class="chip">2h</div>
+            </div>
+            <span class="spacer"></span>
+            <!-- New control: the line chart is shown, so the label names the other view. -->
+            <div class="toggle" data-on="false">Distribution</div>
+            <div class="freeze">⏸ Freeze</div>
+          </div>
+          <div class="readiness">Readings · last 30 minutes</div>
+
+          <div class="plot portrait-plot">
+            <div class="plot-row">
+              <div class="pct-axis"><span>8</span><span>4</span><span>0</span></div>
+              <div class="bars-wrap">
+                <svg class="linechart" viewBox="0 0 310 140" role="img" aria-label="Synthetic power history">
+                  <path class="grid" d="M0 1H310M0 70H310"></path>
+                  <path class="zero" d="M0 139H310"></path>
+                  <rect class="gap" x="176" y="0" width="16" height="139"></rect>
+                  <path class="trace" d="M0 96 14 88 28 61 42 96 56 120 70 110 84 92 98 54 112 74 126 66 140 44 154 50 168 62 176 96"></path>
+                  <path class="trace" d="M192 110 206 96 220 74 234 58 248 40 262 46 276 30 290 44 310 32"></path>
+                </svg>
+              </div>
+            </div>
+            <div class="edges-row"><span style="width:44px"></span><div class="edges"><span style="left:0">09:11</span><span style="right:0">09:41</span></div></div>
+            <div class="legend"><span class="left"><i class="swatch" style="width:13px;height:2px"></i>Battery flow</span><span>Blank region = no samples</span></div>
+          </div>
+
+          <div class="stats">
+            <div><span>Window average</span><strong>4.20 <small>W</small></strong></div>
+            <div><span>Min</span><strong>2.20 <small>W</small></strong></div>
+            <div><span>Max</span><strong>7.80 <small>W</small></strong></div>
+          </div>
+          <div class="session-link"><span>Session <strong>00:41:06</strong></span><span>2.800 Wh out ↗</span></div>
+          <div class="mode-note"><span>◌</span><span><strong>Low impact · recording in the background</strong>A reading every 2s while the phone is awake.</span></div>
+        </div>
+        <div class="stop-row"><div class="stop-button">■ Stop recording</div></div>
+        <div class="nav">
+          <div data-current="true"><span class="glyph">◫</span>Monitor</div>
+          <div><span class="glyph">▤</span>Session</div>
+          <div><span class="glyph">ⓘ</span>Diagnostics</div>
+        </div>
+      </div>
+      <figcaption>Portrait · line chart, Storm. The new <code>Distribution</code> toggle sits between the window chips and Freeze: one labelled control at a 48dp target, label naming the view it switches to.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone portrait" data-theme="storm">
+        <div class="sysbar"><span>9:41</span><span>▴ ▴ ▰</span></div>
+        <div class="appbar">
+          <span class="brand">wpm<span class="prompt">_</span></span><span class="sub">BATTERY FLOW</span>
+          <span class="grow"></span><span class="gear">⚙</span>
+        </div>
+        <div class="scroll">
+          <div class="statusline"><span class="left"><i class="dot"></i>Recording</span><span>Sample 2s ago</span></div>
+          <div class="caption">Power &amp; current · latest reading</div>
+          <div class="reading">
+            <div class="number">4.80<span class="unit">W</span></div>
+            <div class="battery">68<span>%</span><span>battery</span></div>
+          </div>
+          <div class="flowline"><span class="discharge">↓ Discharging</span><span class="electrical">4.02 V / 1.194 A</span></div>
+          <div class="readiness">From the latest calibrated reading</div>
+
+          <div class="chart-head">
+            <h2>Power <span class="unit-note">/ W</span></h2>
+            <div class="switch" data-on="true"><span>Absolute scale</span><i class="track"></i></div>
+          </div>
+          <div class="controls">
+            <div class="chips">
+              <div class="chip">5m</div><div class="chip" data-selected="true">30m</div><div class="chip">2h</div>
+            </div>
+            <span class="spacer"></span>
+            <div class="toggle" data-on="true">Line chart</div>
+            <div class="freeze">⏸ Freeze</div>
+          </div>
+          <!-- Distribution header: n, bin count, bin width in the display unit. -->
+          <div class="readiness" data-header="portrait">Distribution · n=60 · 9 bins · 0.75 W wide · 6 excluded</div>
+
+          <div class="plot portrait-plot">
+            <div class="hist" data-hist="portrait-dist"></div>
+          </div>
+
+          <div class="stats">
+            <div><span>Window average</span><strong>4.20 <small>W</small></strong></div>
+            <div><span>Min</span><strong>2.20 <small>W</small></strong></div>
+            <div><span>Max</span><strong>7.80 <small>W</small></strong></div>
+          </div>
+          <div class="session-link"><span>Session <strong>00:41:06</strong></span><span>2.800 Wh out ↗</span></div>
+          <div class="mode-note"><span>◌</span><span><strong>Low impact · recording in the background</strong>A reading every 2s while the phone is awake.</span></div>
+        </div>
+        <div class="stop-row"><div class="stop-button">■ Stop recording</div></div>
+        <div class="nav">
+          <div data-current="true"><span class="glyph">◫</span>Monitor</div>
+          <div><span class="glyph">▤</span>Session</div>
+          <div><span class="glyph">ⓘ</span>Diagnostics</div>
+        </div>
+      </div>
+      <figcaption>Portrait · distribution, Storm. Same 184dp plot slot as the line chart, so nothing below it moves. Percent axis tops out at the first nice ceiling above the 35% peak.</figcaption>
+    </figure>
+
+    <div class="notes">
+      <div class="card">
+        <h2>What the bars mean</h2>
+        <p>Each reading is counted once into a watt bin, so a bar is <strong>percentage of counted discharge readings</strong>, not an average and not a distribution of instantaneous samples weighted by time.</p>
+        <ul>
+          <li>Charging, idle, missing and gap-marked samples never enter a bin; the header reports how many were excluded.</li>
+          <li>Percentages divide by the <em>counted</em> population <code>n</code>, so they sum to 100%.</li>
+          <li>Fewer than 8 counted readings keeps the placeholder: <code>collecting 3/8 readings</code>.</li>
+          <li>An empty bin draws nothing. The hole is data, not a rendering bug.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Ported constants</h2>
+        <p><code>MIN_SAMPLES 8</code> · <code>MIN_BINS 6</code> · <code>MAX_BINS 14</code> · <code>LOG_SUPPORT_RATIO 10</code> · <code>QUANTUM_DECIMALS 3</code> · <code>NICE_PERCENT 5,10,15,20,25,30,40,50,60,75,100</code> · <code>STEP_LADDER 1,1.5,2,2.5,3,4,5,7.5,10</code>.</p>
+        <p>Bin width is Freedman–Diaconis, snapped to that ladder and to the meter's own increment; edges start below the first reading rather than at zero. A decade of support switches the axis to log-spaced, and the header says so.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: the reference landscape composition. -->
+  <div class="row">
+    <figure>
+      <div class="phone landscape" data-theme="storm">
+        <div class="sysbar"><span>9:41</span><span>▴ ▴ ▰</span></div>
+        <div class="appbar">
+          <span class="brand">wpm<span class="prompt">_</span></span><span class="sub">BATTERY FLOW</span>
+          <span class="grow"></span><i class="dot"></i><span class="state-word">Recording</span><span class="gear">⚙</span>
+        </div>
+        <div class="strip">
+          <div class="reading">
+            <div class="caption">Power &amp; current · latest reading</div>
+            <div class="number">4.80<span class="unit">W</span></div>
+          </div>
+          <div class="flowcell">
+            <span class="discharge" style="color:var(--discharge)">↓ Discharging</span>
+            <span class="muted">4.02 V / 1.194 A</span>
+            <span class="muted">From the latest calibrated reading</span>
+          </div>
+          <div class="stats">
+            <div><span>Window average</span><strong>4.20 <small>W</small></strong></div>
+            <div><span>Min</span><strong>2.20 <small>W</small></strong></div>
+            <div><span>Max</span><strong>7.80 <small>W</small></strong></div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="label">
+            <h2>Power <span class="unit-note">/ W</span></h2>
+            <div class="sub2" data-header="land-main">Distribution · n=60 · 9 bins · 0.75 W wide · 6 excluded</div>
+          </div>
+          <div class="chips"><div class="chip">5m</div><div class="chip" data-selected="true">30m</div><div class="chip">2h</div></div>
+          <div class="toggle" data-on="true">Line chart</div>
+          <div class="switch" data-on="true"><span>Absolute scale</span><i class="track"></i></div>
+          <div class="freeze">⏸ Freeze</div>
+        </div>
+        <div class="chart-area">
+          <div class="plot landscape-plot">
+            <div class="hist" data-hist="land-main"></div>
+          </div>
+        </div>
+        <div class="deck">
+          <div class="navrow">
+            <div data-current="true">◫ Monitor</div><div>▤ Session</div><div>ⓘ Diagnostics</div>
+          </div>
+          <div class="session"><strong>Session 00:41:06</strong><span>2.800 Wh out</span></div>
+          <div class="stop">■ Stop</div>
+        </div>
+      </div>
+      <figcaption>Landscape 880 × 452 · distribution, Storm. Replaces the line chart in the same plot area; the readings strip, toolbar and deck keep their heights. Edge labels thin to ~44dp slots instead of colliding.</figcaption>
+    </figure>
+    <div class="notes">
+      <div class="card">
+        <h2>Layout contract</h2>
+        <p>The histogram reuses the chart's 44dp axis gutter and its axis+legend height budget (<code>AXIS_AND_LEGEND_HEIGHT_DP 40</code>), so the landscape canvas keeps its 120dp minimum and the portrait plot keeps 184dp.</p>
+        <p>The one added control costs 88dp in the toolbar budget: controls grow 374 → 468dp and the one-line caption minimum grows 506 → 600dp, still under the 720dp two-row threshold. Below 318dp of available portrait width the toggle takes its own 48dp row instead of squeezing the chips.</p>
+      </div>
+      <div class="card">
+        <h2>Interaction</h2>
+        <ul>
+          <li>Window chips scope the population: 5m / 30m / 2h change <code>n</code> and the bin width.</li>
+          <li>Absolute/signed changes the readout and the line chart; the distribution counts discharge magnitudes, so its bars and edges are identical in both scales.</li>
+          <li>Freeze bins the frozen snapshot: the bars hold still, the caption says the view is frozen.</li>
+          <li>Rotation and the selected view survive configuration change; the choice is not persisted across a process restart.</li>
+          <li>Bars are not tappable: a 14-bin plot on a 320dp phone is ~20dp per bar, below the 48dp target this app holds. The plot is one accessible summary node instead.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: the empty state and the log axis, in the light palette. -->
+  <div class="row wrap">
+    <figure>
+      <div class="phone landscape" data-theme="latte">
+        <div class="sysbar"><span>9:41</span><span>▴ ▴ ▰</span></div>
+        <div class="appbar">
+          <span class="brand">wpm<span class="prompt">_</span></span><span class="sub">BATTERY FLOW</span>
+          <span class="grow"></span><i class="dot"></i><span class="state-word">Recording</span><span class="gear">⚙</span>
+        </div>
+        <div class="strip">
+          <div class="reading">
+            <div class="caption">Power &amp; current · latest reading</div>
+            <div class="number">612<span class="unit">mW</span></div>
+          </div>
+          <div class="flowcell">
+            <span style="color:var(--discharge)">↓ Discharging</span>
+            <span class="muted">4.11 V / 149 mA</span>
+            <span class="muted">From the latest calibrated reading</span>
+          </div>
+          <div class="stats">
+            <div><span>Window average</span><strong>598 <small>mW</small></strong></div>
+            <div><span>Min</span><strong>402 <small>mW</small></strong></div>
+            <div><span>Max</span><strong>724 <small>mW</small></strong></div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="label">
+            <h2>Power <span class="unit-note">/ mW</span></h2>
+            <div class="sub2" data-header="land-empty">Distribution · collecting 3/8 readings</div>
+          </div>
+          <div class="chips"><div class="chip" data-selected="true">5m</div><div class="chip">30m</div><div class="chip">2h</div></div>
+          <div class="toggle" data-on="true">Line chart</div>
+          <div class="switch" data-on="true"><span>Absolute scale</span><i class="track"></i></div>
+          <div class="freeze">⏸ Freeze</div>
+        </div>
+        <div class="chart-area">
+          <div class="plot landscape-plot">
+            <div class="hist" data-hist="land-empty"></div>
+          </div>
+        </div>
+        <div class="deck">
+          <div class="navrow">
+            <div data-current="true">◫ Monitor</div><div>▤ Session</div><div>ⓘ Diagnostics</div>
+          </div>
+          <div class="session"><strong>Session 00:00:14</strong><span>— Wh out</span></div>
+          <div class="stop">■ Stop</div>
+        </div>
+      </div>
+      <figcaption>Landscape · collecting 3/8 readings, Latte (light). No bars, no invented zero: the header names the count still needed and the plot says what it is waiting for. Milliwatt units reach the axis and the bin width.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone landscape" data-theme="latte">
+        <div class="sysbar"><span>9:41</span><span>▴ ▴ ▰</span></div>
+        <div class="appbar">
+          <span class="brand">wpm<span class="prompt">_</span></span><span class="sub">BATTERY FLOW</span>
+          <span class="grow"></span><i class="dot"></i><span class="state-word">Recording</span><span class="gear">⚙</span>
+        </div>
+        <div class="strip">
+          <div class="reading">
+            <div class="caption">Power &amp; current · latest reading</div>
+            <div class="number">38.4<span class="unit">W</span></div>
+          </div>
+          <div class="flowcell">
+            <span style="color:var(--discharge)">↓ Discharging</span>
+            <span class="muted">12.60 V / 3.05 A</span>
+            <span class="muted">From the latest calibrated reading</span>
+          </div>
+          <div class="stats">
+            <div><span>Window average</span><strong>27.6 <small>W</small></strong></div>
+            <div><span>Min</span><strong>2.0 <small>W</small></strong></div>
+            <div><span>Max</span><strong>187.5 <small>W</small></strong></div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="label">
+            <h2>Power <span class="unit-note">/ W</span></h2>
+            <div class="sub2" data-header="land-log">Distribution · n=60 · 10 bins · log-spaced</div>
+          </div>
+          <div class="chips"><div class="chip" data-selected="true">5m</div><div class="chip">30m</div><div class="chip">2h</div></div>
+          <div class="toggle" data-on="true">Line chart</div>
+          <div class="switch" data-on="true"><span>Absolute scale</span><i class="track"></i></div>
+          <div class="freeze">⏸ Freeze</div>
+        </div>
+        <div class="chart-area">
+          <div class="plot landscape-plot">
+            <div class="hist" data-hist="land-log"></div>
+          </div>
+        </div>
+        <div class="deck">
+          <div class="navrow">
+            <div data-current="true">◫ Monitor</div><div>▤ Session</div><div>ⓘ Diagnostics</div>
+          </div>
+          <div class="session"><strong>Session 00:41:06</strong><span>2.800 Wh out</span></div>
+          <div class="stop">■ Stop</div>
+        </div>
+      </div>
+      <figcaption>Landscape · log-spaced axis, Latte (light). A two-decade span (2 W … 190 W) switches the axis; every edge shares one ratio and the header says <code>log-spaced</code> instead of a width in watts.</figcaption>
+    </figure>
+  </div>
+
+</main>
+
+<footer class="review">
+  Design only — synthetic fixtures, no Android/Kotlin code changed, nothing measured. Spec: <code>android/specs/power-distribution.md</code>.
+  Reference implementation: <code>src/histogram.rs</code> (commit f696503).
+</footer>
+
+<script>
+/* One-shot render of synthetic bars. No timers, no polling, no network. */
+(() => {
+  "use strict";
+
+  // The 60-reading reference session from src/histogram.rs tests:
+  // 9 bins of 0.75 W from 3.0 W, counts pinned by the Rust unit test.
+  const LINEAR = {
+    counts: [2, 21, 18, 8, 5, 3, 2, 0, 1],
+    edges: [3, 3.75, 4.5, 5.25, 6, 6.75, 7.5, 8.25, 9, 9.75],
+    decimals: 2,
+    top: 40,
+    n: 60,
+    excluded: 6,
+    unit: "W"
+  };
+  // 60 readings of 2.0 * 1.08^i: ten log bins, one ratio, peak 15%.
+  const LOG = {
+    counts: [3, 6, 6, 6, 6, 6, 6, 6, 6, 9],
+    edges: [1.585, 2.512, 3.981, 6.31, 10, 15.849, 25.119, 39.811, 63.096, 100, 158.489],
+    decimals: 2,
+    top: 15,
+    n: 60,
+    excluded: 0,
+    unit: "W"
+  };
+  const EMPTY = { counts: [], edges: [], top: 40, n: 3, excluded: 0, unit: "mW", need: 8 };
+
+  const SPECS = {
+    "portrait-dist": LINEAR,
+    "land-main": LINEAR,
+    "land-log": LOG,
+    "land-empty": EMPTY
+  };
+
+  const trimZeros = (text) => text.includes(".")
+    ? text.replace(/0+$/, "").replace(/\.$/, "")
+    : text;
+
+  function render(host) {
+    const spec = SPECS[host.dataset.hist];
+    if (!spec) return;
+    const bins = spec.counts.length;
+    const hasBars = bins > 0;
+    const peak = hasBars ? Math.max.apply(null, spec.counts) : 0;
+
+    const mid = Math.round(spec.top / 2);
+    const root = document.createElement("div");
+    root.className = "plot-inner";
+    root.style.cssText = "display:flex;flex-direction:column;height:100%";
+
+    const row = document.createElement("div");
+    row.className = "plot-row";
+
+    const axis = document.createElement("div");
+    axis.className = "pct-axis";
+    // Percent ticks are whole numbers, exactly like the terminal's `{:>3.0}%`
+    // formatting of top, top/2 and zero.
+    if (hasBars) {
+      axis.innerHTML = "<span>" + spec.top + "%</span><span>" + mid + "%</span><span>0%</span>";
+    }
+    row.appendChild(axis);
+
+    const wrap = document.createElement("div");
+    wrap.className = "bars-wrap";
+
+    if (hasBars) {
+      const grid = document.createElement("div");
+      grid.className = "gridlines";
+      [0, 50, 100].forEach((pct, index) => {
+        const line = document.createElement("i");
+        line.style.bottom = pct + "%";
+        if (index === 2) line.className = "zero";
+        grid.appendChild(line);
+      });
+      wrap.appendChild(grid);
+
+      const bars = document.createElement("div");
+      bars.className = "bars";
+      spec.counts.forEach((count) => {
+        const bar = document.createElement("div");
+        bar.className = count === 0 ? "bar empty" : "bar";
+        // Percentage of counted readings, scaled to the nice ceiling.
+        bar.style.height = (100 * count / spec.n / spec.top * 100) + "%";
+        bar.title = (100 * count / spec.n).toFixed(1) + "% of " + spec.n + " readings";
+        bars.appendChild(bar);
+      });
+      wrap.appendChild(bars);
+    } else {
+      const note = document.createElement("div");
+      note.className = "placeholder";
+      note.textContent = "Needs " + spec.need + " discharge readings";
+      wrap.appendChild(note);
+    }
+    row.appendChild(wrap);
+    root.appendChild(row);
+
+    const edgeRow = document.createElement("div");
+    edgeRow.className = "edges-row";
+    const gutter = document.createElement("span");
+    gutter.style.width = "44px";
+    gutter.style.flex = "0 0 44px";
+    edgeRow.appendChild(gutter);
+    const edges = document.createElement("div");
+    edges.className = "edges";
+    if (hasBars) {
+      const width = host.clientWidth || 320;
+      const plotWidth = Math.max(120, width - 44);
+      // One label per ~44dp slot; never more labels than bins.
+      const shown = Math.max(1, Math.min(bins, Math.floor(plotWidth / 44)));
+      for (let slot = 0; slot < shown; slot += 1) {
+        const index = shown === 1 ? 0 : Math.round(slot * (bins - 1) / (shown - 1));
+        const span = document.createElement("span");
+        span.textContent = trimZeros(spec.edges[index].toFixed(spec.decimals));
+        span.style.left = (100 * index / bins) + "%";
+        // First label aligns to the plot edge, the last one to the far edge.
+        if (index === 0) span.style.transform = "none";
+        else if (index === bins - 1) span.style.transform = "translateX(-100%)";
+        edges.appendChild(span);
+      }
+    }
+    edgeRow.appendChild(edges);
+    // No edge labels without bars: the placeholder is the whole message.
+    if (hasBars) root.appendChild(edgeRow);
+
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    const left = document.createElement("span");
+    left.className = "left";
+    left.innerHTML = "<i class=\"swatch\"></i>" +
+      (hasBars
+        ? "Bars · % of counted discharge readings"
+        : "No distribution yet");
+    const right = document.createElement("span");
+    right.textContent = hasBars
+      ? "n=" + spec.n + (spec.excluded > 0 ? " · " + spec.excluded + " excluded" : " · all counted")
+      : (spec.need - spec.n) + " more readings needed";
+    legend.appendChild(left);
+    legend.appendChild(right);
+    root.appendChild(legend);
+
+    // Accessible summary of the same synthetic numbers (design review text only).
+    host.setAttribute("role", "img");
+    host.setAttribute("aria-label", hasBars
+      ? "Power distribution: " + spec.n + " counted discharge readings in " + bins +
+        " bins, peak " + Math.round(100 * peak / spec.n) + " percent"
+      : "Power distribution: collecting " + spec.n + " of " + spec.need + " discharge readings");
+    host.appendChild(root);
+  }
+
+  document.querySelectorAll("[data-hist]").forEach(render);
+
+  const palette = document.getElementById("palette");
+  const themed = Array.from(document.querySelectorAll(".phone"));
+  const authored = themed.map((phone) => phone.dataset.theme);
+  palette.addEventListener("change", () => {
+    const choice = palette.value;
+    themed.forEach((phone, index) => {
+      phone.dataset.theme = choice === "mixed" ? authored[index] : choice;
+    });
+  });
+})();
+</script>
+</body>
+</html>

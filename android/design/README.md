@@ -181,3 +181,18 @@ background execution, battery telemetry, or the app's own energy overhead.
 5. Would you prefer denser information or larger text/fewer first-screen fields?
 
 No Android runtime changes should follow until the basic hierarchy is approved.
+
+# Android UI study 02: power distribution
+
+Open **[histogram-mockup.html](histogram-mockup.html)** directly in a browser. Same
+rules as study 01: synthetic readings only, no battery APIs, no network, and no
+WebView shipping intent.
+
+The study is the same Monitor layout with the line chart replaced in place by a
+percent-per-watt histogram. It covers portrait and landscape, Tokyo Night Storm
+and Catppuccin Latte, one labelled line-chart/distribution toggle, the
+`collecting 3/8 readings` state, and a log-spaced variant. Bars are percentages of
+counted discharge readings, with the bin count and width in the header.
+
+Contract: [../specs/power-distribution.md](../specs/power-distribution.md). Nothing
+is implemented; the Kotlin names in that document are a proposal.

@@ -10,6 +10,9 @@ Licensed under the repository's [GPL-3.0-only license](../LICENSE). The
 
 The [approved interactive mock-up](design/mobile-mockup.html) uses synthetic data
 for design review only. The native app uses actual Android telemetry instead.
+The [power distribution study](design/histogram-mockup.html) reviews a proposed
+percent-per-watt histogram, specified by the
+[power distribution contract](specs/power-distribution.md); neither is implemented.
 See the [implementation specification](specs/initial-implementation.md),
 [design brief](design/README.md), and [device acceptance checklist](specs/device-acceptance.md).
 
