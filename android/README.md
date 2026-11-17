@@ -10,9 +10,10 @@ Licensed under the repository's [GPL-3.0-only license](../LICENSE). The
 
 The [approved interactive mock-up](design/mobile-mockup.html) uses synthetic data
 for design review only. The native app uses actual Android telemetry instead.
-The [power distribution study](design/histogram-mockup.html) reviews a proposed
-percent-per-watt histogram, specified by the
-[power distribution contract](specs/power-distribution.md); neither is implemented.
+The [power distribution study](design/histogram-mockup.html) previews the
+percent-per-watt histogram specified by the
+[power distribution contract](specs/power-distribution.md); that view is now
+implemented, the HTML stays a design artifact.
 See the [implementation specification](specs/initial-implementation.md),
 [design brief](design/README.md), and [device acceptance checklist](specs/device-acceptance.md).
 
@@ -22,6 +23,11 @@ See the [implementation specification](specs/initial-implementation.md),
 - Native Compose Monitor, Session, Diagnostics, settings, and four terminal palettes.
 - Separate portrait and chart-first landscape layouts, absolute/signed display,
   retained freeze view, gaps, window/session statistics, and CSV export.
+- A **power distribution** view of the selected window: the same discharge readings
+  counted into 6-14 watt bins, percent per bin, with a labelled toggle in the chart
+  toolbar. Binning mirrors the desktop `g` view (same constants, same oracle), so
+  one session reads the same in both programs. Transient view state only; CSV is
+  unchanged.
 - Magnitude-aware units everywhere (W/mW/µW, Wh/mWh/µWh, A/mA/µA) with a chart axis
   that follows the data, because a phone idles in milliwatts: `1.26 mW`, not
   `0.00 W` on a fixed 0–1 W frame.

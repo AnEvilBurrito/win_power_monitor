@@ -75,6 +75,8 @@ internal data class DashboardScope(
     val settings: MonitorSettings,
     val tab: DashboardTab,
     val window: ChartWindow,
+    /** Line chart or percent-per-watt distribution of the same samples. */
+    val chartView: ChartView,
     val frozen: FrozenSnapshot?,
     val latest: BatterySample?,
     /**
@@ -153,6 +155,7 @@ fun WpmDashboard(
             settings = normalized,
             tab = viewModel.tab,
             window = viewModel.window,
+            chartView = viewModel.chartView,
             frozen = frozen,
             latest = latest,
             liveSamples = liveSamples,
@@ -367,14 +370,21 @@ private fun ColumnScope.MonitorLandscapeContent(
     val content: @Composable () -> Unit = {
         LandscapeReadingsStrip(scope, widthDp)
         ChartFullToolbar(scope, actions, widthDp)
-            ChartArea(
-                modifier = chartModifier.padding(horizontal = 12.dp),
-                samples = scope.liveSamples,
-                windowSeconds = scope.window.seconds,
-                intervalSeconds = scope.settings.intervalSeconds,
-                absolute = scope.settings.absolute,
-                showLegend = true,
-            )
+            when (scope.chartView) {
+                ChartView.LINE -> ChartArea(
+                    modifier = chartModifier.padding(horizontal = 12.dp),
+                    samples = scope.liveSamples,
+                    windowSeconds = scope.window.seconds,
+                    intervalSeconds = scope.settings.intervalSeconds,
+                    absolute = scope.settings.absolute,
+                    showLegend = true,
+                )
+                ChartView.DISTRIBUTION -> DistributionChart(
+                    modifier = chartModifier.padding(horizontal = 12.dp),
+                    samples = scope.liveSamples,
+                    showLegend = true,
+                )
+            }
     }
     if (scrollDetail) {
         Column(

@@ -60,6 +60,9 @@ object LandscapeRules {
     const val CHIP_SPACING_DP = 2
     const val CHIP_COUNT = 3
 
+    /** The line-chart/distribution switch: one labelled toggle, not a third chip. */
+    const val VIEW_TOGGLE_MIN_WIDTH_DP = 88
+
     /** Measured widths of the two remaining controls, including their padding. */
     const val SCALE_TOGGLE_WIDTH_DP = 126
     const val FREEZE_CONTROL_WIDTH_DP = 82
@@ -119,9 +122,13 @@ object LandscapeRules {
     /** Width of the three range chips: three intrinsic chips and two gaps. */
     fun rangeChipsWidthDp(): Int = CHIP_COUNT * CHIP_MIN_WIDTH_DP + (CHIP_COUNT - 1) * CHIP_SPACING_DP
 
-    /** Width of the bounded control group (chips, scale toggle, freeze). */
+    /** Width of the bounded control group (chips, view toggle, scale toggle, freeze). */
     fun controlsWidthDp(): Int =
-        rangeChipsWidthDp() + SCALE_TOGGLE_WIDTH_DP + FREEZE_CONTROL_WIDTH_DP + 3 * CONTROL_SPACING_DP
+        rangeChipsWidthDp() +
+            VIEW_TOGGLE_MIN_WIDTH_DP +
+            SCALE_TOGGLE_WIDTH_DP +
+            FREEZE_CONTROL_WIDTH_DP +
+            4 * CONTROL_SPACING_DP
 
     /** Smallest width that still keeps the label at [LABEL_MIN_WIDTH_DP] on one line. */
     fun oneLineToolbarMinWidthDp(): Int = LABEL_MIN_WIDTH_DP + controlsWidthDp()
@@ -134,6 +141,14 @@ object LandscapeRules {
 
     /** True when the caption keeps a readable single line at [widthDp]. */
     fun labelCannotCollapse(widthDp: Int): Boolean = labelWidthDp(widthDp) >= LABEL_MIN_WIDTH_DP
+
+    /**
+     * True when the chart-view toggle needs its own portrait row instead of sharing
+     * the chips' row: the chips and the freeze control are then already paid for.
+     */
+    fun toolbarToggleOwnRow(availableWidthDp: Int): Boolean =
+        availableWidthDp <
+            rangeChipsWidthDp() + VIEW_TOGGLE_MIN_WIDTH_DP + FREEZE_CONTROL_WIDTH_DP
 
     /**
      * Everything that is not the chart: header, readings strip, toolbar, deck.

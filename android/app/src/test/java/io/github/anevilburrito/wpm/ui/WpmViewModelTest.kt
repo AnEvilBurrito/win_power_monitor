@@ -56,4 +56,31 @@ class WpmViewModelTest {
         assertNull("a stopped session is shown live, not frozen", viewModel.frozen)
         assertEquals(ChartWindow.THIRTY_MINUTES, viewModel.window)
     }
+
+    @Test fun theLineChartIsTheDefaultViewAndTheChoiceIsNotAStoredSetting() {
+        // The desktop also opens on the line chart: this is a way of looking at the
+        // data, so it must not become a preference that survives a restart.
+        val viewModel = WpmViewModel()
+        assertEquals(ChartView.LINE, viewModel.chartView)
+
+        viewModel.toggleChartView()
+        assertEquals(ChartView.DISTRIBUTION, viewModel.chartView)
+        viewModel.toggleChartView()
+        assertEquals(ChartView.LINE, viewModel.chartView)
+
+        viewModel.selectChartView(ChartView.DISTRIBUTION)
+        assertEquals(ChartView.DISTRIBUTION, viewModel.chartView)
+    }
+
+    @Test fun selectingAnotherTabOrWindowNeverResetsTheChartView() {
+        // Rotation and tab changes keep presentation state; only the process ending
+        // clears it.
+        val viewModel = WpmViewModel()
+        viewModel.selectChartView(ChartView.DISTRIBUTION)
+        viewModel.selectTab(DashboardTab.SESSION)
+        viewModel.selectTab(DashboardTab.MONITOR)
+        viewModel.selectWindow(ChartWindow.TWO_HOURS)
+        assertEquals(ChartView.DISTRIBUTION, viewModel.chartView)
+        assertEquals(ChartWindow.TWO_HOURS, viewModel.window)
+    }
 }

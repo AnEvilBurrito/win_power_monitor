@@ -106,6 +106,27 @@ class LandscapeRulesTest {
         assertTrue(LandscapeRules.rangeChipsWidthDp() < phoneWidthDp / 3)
     }
 
+    @Test fun theViewToggleIsBudgetedInsideTheControlGroup() {
+        assertEquals(88, LandscapeRules.VIEW_TOGGLE_MIN_WIDTH_DP)
+        // chips 148 + toggle 88 + scale 126 + freeze 82 + four 6dp gaps
+        assertEquals(468, LandscapeRules.controlsWidthDp())
+        assertEquals(132 + 468, LandscapeRules.oneLineToolbarMinWidthDp())
+        // The two-row fallback still covers every narrower landscape window, so the
+        // extra control can never squeeze the caption on a one-line toolbar.
+        assertTrue(
+            LandscapeRules.oneLineToolbarMinWidthDp() <
+                LandscapeRules.TWO_ROW_TOOLBAR_BELOW_WIDTH_DP,
+        )
+    }
+
+    @Test fun theViewToggleGetsItsOwnPortraitRowOnlyWhenItMust() {
+        // chips + toggle + freeze, with no room for the scale toggle's label
+        assertEquals(318, LandscapeRules.rangeChipsWidthDp() + 88 + 82)
+        assertTrue(LandscapeRules.toolbarToggleOwnRow(284))
+        assertFalse(LandscapeRules.toolbarToggleOwnRow(324))
+        assertFalse(LandscapeRules.toolbarToggleOwnRow(468))
+    }
+
     @Test fun toolbarLinesAreAtLeastAsTallAsTheirFortyEightDpChildren() {
         assertTrue(LandscapeRules.READINGS_STRIP_HEIGHT_DP >= 56)
         assertTrue(LandscapeRules.COMPACT_READINGS_STRIP_HEIGHT_DP >= LandscapeRules.READINGS_STRIP_HEIGHT_DP)

@@ -129,6 +129,12 @@ positive wattage in both display scales.
 
 ## 5. Presentation
 
+**Status: implemented.** The pure model is `ui/PowerDistribution.kt` with
+`ui/PowerDistributionTest.kt` (18 cases, fixture copied from `src/histogram.rs`); the
+view is `DistributionChart` in `ui/PowerChart.kt`; the switch is `ChartViewToggle` in
+`ui/MonitorScreen.kt`; the selection is `WpmViewModel.chartView`. One deviation from
+§5.3 is recorded there. `testDebugUnitTest`: 557 tests, 0 failures.
+
 ### 5.1 Placement: replace the line chart in place
 
 - Recommended and specified: the distribution **replaces the line chart inside the
@@ -178,10 +184,17 @@ positive wattage in both display scales.
 
 ### 5.3 Header line
 
-The header is one single-line text in the existing caption slot, mirroring
-`distribution_title` (`src/ui.rs:199-217`). Bin width uses the magnitude-aware
-display unit (§5.6), so a milliwatt-scale phone reads `250 mW wide`, not
-`0.25 W wide`.
+The header is one single-line text, mirroring `distribution_title`
+(`src/ui.rs:199-217`). Bin width uses the magnitude-aware display unit (§5.6), so a
+milliwatt-scale phone reads `250 mW wide`, not `0.25 W wide`.
+
+**Implementation note (deviation).** The header is drawn inside the plot area, in a
+13dp band at the top of the canvas, rather than in the caption slot above it. The
+caption slot already carries the frozen/stopped/stale wording that §5.3 requires to
+stay (`chartCaptionText`), and growing the landscape toolbar by a third line would
+break the fixed chrome budget in `LandscapeRules`. A band inside the canvas costs no
+layout height, keeps the caption's meaning intact, and the bars start below it so the
+header never overlaps data.
 
 - Tiers, longest first. Draw the first tier whose measured width fits the caption
   slot (measure with `rememberTextMeasurer`, the same technique the unit slot uses
@@ -370,40 +383,38 @@ duplicates it.
 ## 8. Pure-Kotlin boundary and test matrix
 
 New `ui/PowerDistribution.kt`, Android-free (no Compose, no `android.*`, no
-`context`), mirroring `ui/ChartModel.kt`:
+`context`), mirroring `ui/ChartModel.kt`. As built:
 
 ```kotlin
-/** Port of src/histogram.rs: constants, edge label precision, scale, percentages. */
 const val DISTRIBUTION_MIN_SAMPLES = 8
 const val DISTRIBUTION_MIN_BINS = 6
 const val DISTRIBUTION_MAX_BINS = 14
 const val DISTRIBUTION_LOG_SUPPORT_RATIO = 10.0
 const val DISTRIBUTION_QUANTUM_DECIMALS = 3
+const val DISTRIBUTION_LABEL_SLOT_DP = 44
 val DISTRIBUTION_NICE_PERCENT = doubleArrayOf(5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 75.0, 100.0)
 val DISTRIBUTION_STEP_LADDER = doubleArrayOf(1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.5, 10.0)
 
 enum class DistributionScale { LINEAR, LOG }
-
 data class DistributionPopulation(val values: List<Double>, val excluded: Int)
-
-data class PowerDistribution(
-    val edges: List<Double>,
-    val counts: List<Int>,
-    val scale: DistributionScale,
-    val n: Int,
-    val topPercent: Double,
-)
+data class PowerDistribution(edges, counts, scale, n, topPercent)
 
 fun distributionPopulation(samples: List<BatterySample>): DistributionPopulation
 fun distributionWindow(samples: List<BatterySample>, windowSeconds: Int): List<BatterySample>
-fun buildDistribution(population: DistributionPopulation): PowerDistribution?   // null below the gate
+fun buildDistribution(population: DistributionPopulation): PowerDistribution?
 fun PowerDistribution.bins(): Int
 fun PowerDistribution.percent(index: Int): Double
 fun PowerDistribution.peakPercent(): Double
 fun PowerDistribution.step(): Double
-fun PowerDistribution.binLabel(index: Int, unit: PowerUnit): String
-fun PowerDistribution.widthLabel(unit: PowerUnit): String   // "0.75 W" / "250 mW" / "log-spaced"
 fun PowerDistribution.axisUnit(): PowerUnit
+fun PowerDistribution.binLabel(index: Int, unit: PowerUnit): String
+fun PowerDistribution.widthLabel(unit: PowerUnit): String
+fun PowerDistribution.accessibilityDescription(): String
+fun distributionHeaderTiers(distribution: PowerDistribution?, population: DistributionPopulation): List<String>
+fun distributionPlaceholder(distribution: PowerDistribution?, population: DistributionPopulation): String?
+fun distributionLabelIndices(binCount: Int, plotWidthDp: Int): List<Int>
+fun percentLabel(percent: Double): String
+fun distributionFor(samples: List<BatterySample>, windowSeconds: Int): PowerDistribution?
 ```
 
 `ui/PowerDistributionTest.kt` must contain at least these cases. Names in
@@ -447,11 +458,13 @@ parentheses are the Rust tests they mirror (`src/histogram.rs:359-580`).
     already scrolls, so a larger font cannot clip the header into an ellipsis
     without the legend still carrying `n`.
 - Performance:
-  - computed inside `remember(liveSamples, window, chartView)`, i.e. once per
-    polled sample list change, window change or view change — never per frame,
-    never on theme/rotation/freeze-tick recomposition. This follows the existing
-    rule "recompute chart/stats only on data/window/scale changes"
-    (`initial-implementation.md:264`);
+  - computed inside `remember(…)` on the sample list (already window-scoped by
+    `DashboardScope.liveSamples`), so it runs once per polled list change — never per
+    frame, never on theme/rotation/freeze-tick recomposition. The distribution
+    composable only exists while it is the selected view, so switching views disposes
+    and recreates it instead of needing `chartView` as a `remember` key.
+    This follows the existing rule "recompute chart/stats only on data/window/scale
+    changes" (`initial-implementation.md:264`);
   - the population is bounded by the visible window and by
     `MonitoringRepository.MAX_UI_SAMPLES = 8192` (`MonitoringRepository.kt:820`),
     i.e. at most 7200 samples at a 1s cadence over 2h; sorting that is a few

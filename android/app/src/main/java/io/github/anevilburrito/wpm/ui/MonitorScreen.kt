@@ -148,16 +148,25 @@ internal fun MonitorPortrait(scope: DashboardScope, actions: DashboardActions) {
         }
         RangeToolbar(scope, actions)
         ChartCaption(scope.window, scope.frozen, scope.state.running, scope.stale)
-        ChartArea(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(LandscapeRules.PORTRAIT_PLOT_HEIGHT_DP.dp)
-                .padding(top = 4.dp),
-            samples = scope.liveSamples,
-            windowSeconds = scope.window.seconds,
-            intervalSeconds = scope.settings.intervalSeconds,
-            absolute = scope.settings.absolute,
-        )
+        when (scope.chartView) {
+            ChartView.LINE -> ChartArea(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(LandscapeRules.PORTRAIT_PLOT_HEIGHT_DP.dp)
+                    .padding(top = 4.dp),
+                samples = scope.liveSamples,
+                windowSeconds = scope.window.seconds,
+                intervalSeconds = scope.settings.intervalSeconds,
+                absolute = scope.settings.absolute,
+            )
+            ChartView.DISTRIBUTION -> DistributionChart(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(LandscapeRules.PORTRAIT_PLOT_HEIGHT_DP.dp)
+                    .padding(top = 4.dp),
+                samples = scope.liveSamples,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         HorizontalDivider(color = colors.rule.copy(alpha = 0.5f), thickness = 1.dp)
         WindowStatsRow(stats, Modifier.padding(top = 14.dp))
@@ -466,6 +475,7 @@ internal fun ChartFullToolbar(scope: DashboardScope, actions: DashboardActions, 
                 RangeChips(scope, actions)
                 Spacer(Modifier.weight(1f))
                 ScaleToggle(scope, actions, showLabel = widthDp >= 420)
+                ChartViewToggle(scope, actions)
                 FreezeButton(scope, actions)
             }
         }
@@ -487,6 +497,7 @@ internal fun ChartFullToolbar(scope: DashboardScope, actions: DashboardActions, 
                     .widthIn(min = LandscapeRules.LABEL_MIN_WIDTH_DP.dp),
             )
             RangeChips(scope, actions)
+            ChartViewToggle(scope, actions)
             ScaleToggle(scope, actions)
             FreezeButton(scope, actions)
         }
@@ -527,16 +538,80 @@ private fun ToolbarLabel(scope: DashboardScope, axisUnit: PowerUnit, modifier: M
 
 @Composable
 private fun RangeToolbar(scope: DashboardScope, actions: DashboardActions) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // The chips and the freeze control are paid for first; the view toggle joins
+        // their row only where it cannot squeeze either of them.
+        val toggleOwnRow = LandscapeRules.toolbarToggleOwnRow(maxWidth.value.roundToInt())
+        if (toggleOwnRow) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RangeChips(scope, actions)
+                    Spacer(Modifier.weight(1f))
+                    FreezeButton(scope, actions)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ChartViewToggle(scope, actions)
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Intrinsic chips, then the flexible gap: the chips are never stretched.
+                RangeChips(scope, actions)
+                Spacer(Modifier.weight(1f))
+                ChartViewToggle(scope, actions)
+                FreezeButton(scope, actions)
+            }
+        }
+    }
+}
+
+/**
+ * Line chart / distribution switch.
+ *
+ * A labelled toggle rather than a third chip: the label names the *other* view, the
+ * state is announced through [Role.Switch], and the tint follows the same rule as
+ * the freeze control, so no information depends on colour alone.
+ */
+@Composable
+private fun ChartViewToggle(scope: DashboardScope, actions: DashboardActions) {
+    val colors = LocalWpmColors.current
+    val distribution = scope.chartView == ChartView.DISTRIBUTION
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp),
+            .heightIn(min = 48.dp)
+            .widthIn(min = LandscapeRules.VIEW_TOGGLE_MIN_WIDTH_DP.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .toggleable(
+                value = distribution,
+                role = Role.Switch,
+                onValueChange = { actions.viewModel.toggleChartView() },
+            )
+            .padding(horizontal = 6.dp)
+            .semantics { contentDescription = "Distribution view" },
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Intrinsic chips, then the flexible gap: the chips are never stretched.
-        RangeChips(scope, actions)
-        Spacer(Modifier.weight(1f))
-        FreezeButton(scope, actions)
+        Text(
+            text = if (distribution) "Line chart" else "Distribution",
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            color = if (distribution) colors.trace else colors.muted,
+            modifier = Modifier.widthIn(min = 58.dp),
+            maxLines = 1,
+            softWrap = false,
+        )
+        WpmMiniSwitch(checked = distribution)
     }
 }
 

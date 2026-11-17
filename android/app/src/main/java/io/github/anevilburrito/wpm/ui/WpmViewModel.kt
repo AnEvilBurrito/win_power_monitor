@@ -16,6 +16,16 @@ enum class ChartWindow(val seconds: Int, val label: String) {
 }
 
 /**
+ * Which reading of the same samples the plot shows.
+ *
+ * [LINE] is `what happened when`, [DISTRIBUTION] is `where does the time go`
+ * (percent per watt bin). Deliberately *not* a setting: it is a way of looking at
+ * data, not something that changes what is recorded, so it is never persisted —
+ * the desktop also opens on the line chart every launch.
+ */
+enum class ChartView { LINE, DISTRIBUTION }
+
+/**
  * A frozen copy of the monitor view. Recording and diagnostics keep running; only
  * the readings/history/statistics shown here are held still and timestamped.
  */
@@ -34,6 +44,8 @@ class WpmViewModel : ViewModel() {
     var tab by mutableStateOf(DashboardTab.MONITOR)
         private set
     var window by mutableStateOf(ChartWindow.THIRTY_MINUTES)
+        private set
+    var chartView by mutableStateOf(ChartView.LINE)
         private set
     var frozen by mutableStateOf<FrozenSnapshot?>(null)
         private set
@@ -59,6 +71,17 @@ class WpmViewModel : ViewModel() {
 
     fun selectWindow(value: ChartWindow) {
         window = value
+    }
+
+    fun selectChartView(value: ChartView) {
+        chartView = value
+    }
+
+    fun toggleChartView() {
+        chartView = when (chartView) {
+            ChartView.LINE -> ChartView.DISTRIBUTION
+            ChartView.DISTRIBUTION -> ChartView.LINE
+        }
     }
 
     fun openSettings() {
