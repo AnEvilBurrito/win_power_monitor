@@ -93,6 +93,27 @@ class MonitoringService : Service() {
 
     private var batteryReceiverRegistered = false
 
+    /**
+     * Display transitions, used only to gate [batteryReceiver].
+     *
+     * The battery trigger cuts presentation latency; with the screen off nobody is
+     * looking and a delivery cannot add a sample anyway (see [DisplayTriggerGate]).
+     * These two broadcasts are transition-only, so this listener costs nothing per
+     * poll.
+     */
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF -> syncBatteryTriggerWithDisplay()
+            }
+        }
+    }
+
+    private var screenReceiverRegistered = false
+
+    /** Gates the per-poll wake-lock IPC; see [WakeLockLease]. */
+    private val wakeLockLease = WakeLockLease(WAKE_LOCK_LEASE_MILLIS)
+
     private lateinit var repository: MonitoringRepository
     private lateinit var provider: BatteryTelemetryProvider
 
@@ -237,6 +258,7 @@ class MonitoringService : Service() {
             },
         )
         registerBatteryReceiver()
+        registerScreenReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -284,6 +306,7 @@ class MonitoringService : Service() {
         samplerJob = null
         settingsJob = null
         unregisterBatteryReceiver()
+        unregisterScreenReceiver()
         releaseWakeLock()
         releaseEstimator()
         val token = takeToken()
@@ -657,11 +680,13 @@ class MonitoringService : Service() {
     }
 
     /**
-     * Registers the `ACTION_BATTERY_CHANGED` trigger for the life of the service.
+     * Registers the `ACTION_BATTERY_CHANGED` trigger while the display is interactive.
      *
      * Not exported: only the system sends this broadcast, and no other app should be
      * able to drive our sampler. A failed registration costs latency only — the poll
-     * still runs — so it is not a recording failure.
+     * still runs — so it is not a recording failure. The trigger is display-gated (see
+     * [DisplayTriggerGate]): its only job is to cut presentation latency, and with the
+     * screen off it cannot add a sample because the spacing floor equals the interval.
      */
     private fun registerBatteryReceiver() {
         if (batteryReceiverRegistered) return
@@ -686,6 +711,63 @@ class MonitoringService : Service() {
             unregisterReceiver(batteryReceiver)
         } catch (_: Throwable) {
             // Already gone, or the process is being torn down.
+        }
+    }
+
+    /**
+     * Listens for display transitions, the only thing that re-evaluates whether the
+     * battery trigger is worth consuming. Transition broadcasts, not a poll.
+     */
+    private fun registerScreenReceiver() {
+        if (screenReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+            ContextCompat.registerReceiver(
+                this,
+                screenReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            screenReceiverRegistered = true
+        } catch (failure: Throwable) {
+            screenReceiverRegistered = false
+            // Without these the trigger simply stays as it was, which is the previous
+            // behaviour: never a recording failure.
+            if (BuildConfig.DEBUG) Log.d(TAG, "screen trigger unavailable: ${describe(failure)}")
+            return
+        }
+        // The registration above cannot tell whether the screen was already off.
+        syncBatteryTriggerWithDisplay()
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (!screenReceiverRegistered) return
+        screenReceiverRegistered = false
+        try {
+            unregisterReceiver(screenReceiver)
+        } catch (_: Throwable) {
+            // Already gone, or the process is being torn down.
+        }
+    }
+
+    /**
+     * Aligns the battery-trigger registration with the current display state.
+     *
+     * Called on both transitions and once after registering, because creating the
+     * service with the screen already off would otherwise leave an unused receiver
+     * registered for the whole session. Dropping it changes no sample: the cadence and
+     * the spacing floor are untouched, so only plug/unplug *visibility* can lag by up
+     * to one interval while the screen was off.
+     */
+    private fun syncBatteryTriggerWithDisplay() {
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive
+        if (DisplayTriggerGate.shouldListenBatteryTrigger(interactive)) {
+            registerBatteryReceiver()
+        } else {
+            unregisterBatteryReceiver()
         }
     }
 
@@ -847,6 +929,11 @@ class MonitoringService : Service() {
     /**
      * Timed partial wake-lock lease, renewed while high-resolution recording runs.
      * Never a bright/display lock.
+     *
+     * The timed lease is the leak safety net: a crash or wedged sampler must let the
+     * system drop the lock on its own. It is therefore re-armed only when the current
+     * lease is half spent ([WakeLockLease]) instead of on every poll, which turns one
+     * `PowerManagerService` IPC per sample into about twelve an hour.
      */
     private fun renewWakeLock() {
         // A stop that raced a sample in flight must not re-acquire the lease.
@@ -856,6 +943,13 @@ class MonitoringService : Service() {
         if (repository.settings.value.mode != MonitoringMode.HIGH_RESOLUTION) return
         try {
             val existing = wakeLock
+            // Still held with more than half a lease left: renewing now would only buy
+            // an IPC. The published flag is unchanged, so nothing is republished.
+            if (existing?.isHeld == true &&
+                !wakeLockLease.isRenewalDue(SystemClock.elapsedRealtime())
+            ) {
+                return
+            }
             if (existing == null) {
                 val powerManager = getSystemService(PowerManager::class.java)
                 if (powerManager == null ||
@@ -871,6 +965,7 @@ class MonitoringService : Service() {
                 ).apply { setReferenceCounted(false) }
             }
             wakeLock?.acquire(WAKE_LOCK_LEASE_MILLIS)
+            wakeLockLease.onArmed(SystemClock.elapsedRealtime())
             repository.setWakeLockHeld(wakeLock?.isHeld == true)
         } catch (failure: Throwable) {
             releaseWakeLock()
@@ -881,6 +976,9 @@ class MonitoringService : Service() {
     private fun releaseWakeLock() {
         val lock = wakeLock
         wakeLock = null
+        // The next request must arm a fresh lease instead of waiting for the half-way
+        // mark of a lease that no longer exists.
+        wakeLockLease.onReleased()
         if (lock != null) {
             try {
                 if (lock.isHeld) lock.release()

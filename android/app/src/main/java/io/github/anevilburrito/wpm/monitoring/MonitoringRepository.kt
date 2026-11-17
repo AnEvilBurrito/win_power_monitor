@@ -74,7 +74,13 @@ class MonitoringRepository private constructor(context: Context) {
      * otherwise — never an unearned claim.
      */
     private var summaryUsesLivePower = false
-    private var samples = ArrayList<BatterySample>()
+    /**
+     * Bounded, immutable UI history. Immutable because the published snapshot is
+     * read from the dashboard without holding [mutex]; see [SampleSeries] for why it
+     * is chunked rather than an `ArrayList` (appending and evicting the oldest
+     * reading are O(chunk), not O(8192), and publishing copies nothing).
+     */
+    private var samples = SampleSeries.EMPTY
     private var pending = ArrayList<BatterySample>()
     private var committedSamples = 0
     private var lastFlushElapsed = 0L
@@ -161,7 +167,7 @@ class MonitoringRepository private constructor(context: Context) {
                 val stored = withContext(Dispatchers.IO) { store.latestSession() }
                 if (stored == null) {
                     summary = SessionSummary()
-                    samples = ArrayList()
+                    samples = SampleSeries.EMPTY
                     sessionId = 0L
                     committedSamples = 0
                     truncated = false
@@ -190,7 +196,7 @@ class MonitoringRepository private constructor(context: Context) {
                     // A restored summary came from the database, which does not mark
                     // which metric it summed: do not claim the live metric for it.
                     summaryUsesLivePower = false
-                    samples = ArrayList(restoredSamples)
+                    samples = SampleSeries.of(restoredSamples)
                     sessionId = restored.id
                     committedSamples = storedCount
                     truncated = stored.historyTruncated || storedCount < restored.sampleCount
@@ -429,7 +435,7 @@ class MonitoringRepository private constructor(context: Context) {
         // from the live metric the export may therefore name.
         summaryUsesLivePower = true
         summary = fresh.snapshot()
-        samples = ArrayList()
+        samples = SampleSeries.EMPTY
         pending = ArrayList()
         committedSamples = 0
         lastFlushElapsed = startedElapsed
@@ -512,8 +518,9 @@ class MonitoringRepository private constructor(context: Context) {
             // same flag and restarts its window from this sample.
             previousElapsed = stored.elapsedRealtimeMillis
             summary = active.add(stored, interval)
-            samples.add(stored)
-            while (samples.size > MAX_UI_SAMPLES) samples.removeAt(0)
+            // One append, one optional eviction: no shifting and no copying of the
+            // rest of the buffer. The previous snapshot stays valid for readers.
+            samples = samples.appended(stored, MAX_UI_SAMPLES)
             pending.add(stored)
             if (pending.size > MAX_UNSAVED_SAMPLES) {
                 pending.subList(0, pending.size - MAX_UNSAVED_SAMPLES).clear()
@@ -789,7 +796,9 @@ class MonitoringRepository private constructor(context: Context) {
         MonitoringSession.setRunning(running)
         mutableState.value = MonitorUiState(
             running = running,
-            samples = samples.toList(),
+            // Already immutable, so publishing it costs nothing; a copy per poll
+            // would be ~64 KiB at the 8192-sample cap, on the service's dispatcher.
+            samples = samples,
             summary = summary,
             error = lostSamplesError ?: persistenceError ?: transientError ?: capacityError,
             historyTruncated = truncated,
