@@ -260,6 +260,14 @@ recomposition. First point alone has no observed duration/average.
   Changing only this option refreshes the notification now without sampling,
   resetting estimators/calibration or making gaps. State/mode/error transitions
   bypass the throttle; Stop clears the notification. Android may defer presentation.
+  Implementation note: an update the throttle allows is still floored to one per
+  minute while no display is interactive (`NotificationDisplayGate`), because a
+  screen-off refresh is invisible and at Instant it would cost 1800-3600 binder
+  calls and SystemUI relayouts an hour. The floor equals the 60s default, so a
+  screen-off notification is never staler than a default-rate user already accepts;
+  a suppressed update is replayed immediately when a display becomes interactive,
+  using the latest published sample and no extra poll. The throttle itself, its
+  bypasses and the 60s default are unchanged.
 - UI observes only while started; no per-second UI clock or redraw animation.
   Recompute chart/stats only on data/window/scale changes, bound/decimate points to
   canvas width preserving first/last/min/max and gap boundaries.

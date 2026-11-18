@@ -31,7 +31,7 @@ will drift; function names are the durable anchor.
 | F | Repository `record()` (L492–551) on the **main** dispatcher (service scope is `Dispatchers.Main.immediate`, L68) | each successful poll | per poll | `SessionAccumulator.add`, `samples.add` + `while (samples.size > MAX_UI_SAMPLES) samples.removeAt(0)` (L515–516), capacity estimator, then `publishLocked()` (L786–801) which does `samples.toList()` (up to `MAX_UI_SAMPLES` = 8192, L820) and allocates a whole new `MonitorUiState` + `StateFlow` write | Yes (independent of UI collectors) |
 | G | Sample-batch flush `flushLocked()` (L601–627) | `pending >= FLUSH_MAX_SAMPLES` (4, L836) or `>= FLUSH_MAX_MILLIS` (60 s, L839) | 4 samples → **900 tx/h at 1 s, 450 at 2 s, 180 at 5 s** (at 5 s the 4-sample rule fires at 20 s, so the 60 s cap never binds) | 1 SQLite transaction (`MonitoringStore.saveBatch` L196–220): 4 inserts × 26 columns + 1 update of the 15-column `sessions` row, plus at least one journal sync on the platform default journal mode | Yes |
 | H | Retention `pruneLocked()` (L629–673) | `lastFlushElapsed - lastPruneElapsed >= PRUNE_INTERVAL_MILLIS` (5 min, L842) | 12 passes/h | `DELETE` + `SELECT COUNT(*)` over the whole `samples` table (`MonitoringStore.countRows` L391) + `storedSampleCount` (`PRAGMA`-free `COUNT(*) WHERE sessionId`, L351) — full scans at the 130 000-row cap | Yes |
-| I | Notification post `updateNotification` (L963–990) | every poll, gated by `NotificationUpdatePolicy.shouldUpdate` | default 60 s; 15 s; or **every poll** on "Instant" | 1 `notify()` IPC; `buildNotification` (L997–1040) constructs **two** `PendingIntent`s per post and sets `setWhen(sample.timestampMillis)` so the row re-lays out every time | Yes |
+| I | Notification post `updateNotification` (L963–990) | every poll, gated by `NotificationUpdatePolicy.shouldUpdate` | default 60 s; 15 s; or **every poll** on "Instant" — while a display is interactive, floored to 60 s while none is (W11) | 1 `notify()` IPC; `buildNotification` (L997–1040) constructs **two** `PendingIntent`s per post and sets `setWhen(sample.timestampMillis)` so the row re-lays out every time | Yes |
 | J | `observeSettings` collector (L692–734) | settings `StateFlow` changes | user-driven only | one `collect`; wakes the sampler and/or posts a notification | Yes |
 | K | Compose staleness ticker `rememberMonotonicMillis` (ui/WpmDashboard.kt L250–281, `STALENESS_TICK_MILLIS` = 5 000 L280) | only while `running && tickerActive` **and** host lifecycle ≥ STARTED (`repeatOnLifecycle` L261) | 5 s (720 recompositions/h) | one `delay` + one `mutableLongStateOf` write → dashboard recomposition; no frame loop, no animation | **No** — gated on STARTED |
 | L | Chart/readout projection (ui/WpmDashboard.kt L137–149) | `remember(monitorState.samples, window)`; the key changes on every poll because `publishLocked` publishes a fresh list | per poll, screen on | `filter` + `forLiveDisplay()` copy per point in the window (300 / 1800 / up to 7200 objects for 5 m / 30 m / 2 h at 1 s) + a full `summarizeWindow` pass | No — no collectors when stopped |
@@ -80,6 +80,41 @@ producing the documented gaps. The actual screen-off cadence for a given OEM is
 Impact classes are coarse: **CPU** (main/worker CPU time or allocation churn),
 **IPC** (binder round-trips per hour), **flash** (durable writes per hour),
 **wakeup** (process/CPU wake events per hour).
+
+### W11 — The notification is refreshed while no display is interactive (P0 at "Instant", IPC/CPU)
+
+- Problem: `updateNotification` is gated only by `NotificationUpdatePolicy`, never by
+  display state. The update rate is a presentation choice, but with the screen off a
+  post still costs a `notify()` binder call, a `buildNotification` allocation and a
+  SystemUI row relayout — 1800–3600 times an hour at "Instant" while nobody can see
+  the result. Each of those wakes the SystemUI process, which makes this the largest
+  remaining per-poll cost that is *not* part of the measurement contract.
+- Evidence: `MonitoringService.updateNotification` (L1061–1090); rate from
+  `NotificationUpdatePolicy`; display state was already available for W3
+  (`DisplayTriggerGate`, `syncDisplayState`).
+- Impact class: IPC/CPU and SystemUI wakeups. At the default 60 s it is 60/h and
+  irrelevant; at "Instant" it is comparable to the whole telemetry path.
+- Fix: floor *routine* posts to one per minute while no display is interactive. A hard
+  gate was rejected because it would let the notification age without bound while the
+  screen is off (a lockscreen/AOD glance could show a value from hours ago). The floor
+  equals the documented 60 s default, so a screen-off notification is never staler than
+  a default-rate user already accepts, and a suppressed update is replayed immediately
+  when a display becomes interactive, using the latest published sample and no extra
+  poll. Nothing changes while a display is interactive.
+- Preserve: `NotificationUpdatePolicy` stays the sole routine decision maker, and its
+  fields (`notificationShowsSample`/`ShowsLive`/`ReadingState`, `lastNotifyElapsed`)
+  keep meaning "what the user last saw", so the first visible post still goes through
+  the confidence/state bypasses. Start/stop promotions and the `stopping` notification
+  bypass the gate, so the foreground-service notification always exists.
+- Amends: [initial-implementation.md](initial-implementation.md) §5 notification
+  paragraph; [device-acceptance.md](device-acceptance.md) notification-rate item.
+- **Status: implemented.** `monitoring/NotificationDisplayGate.kt` is the pure rule
+  (post while interactive; floor to `SCREEN_OFF_FLOOR_MILLIS` = 60 s while not; an
+  unknown display state and a "never posted" stamp both allow the post).
+  `MonitoringService` keeps the display state from the same
+  `ACTION_SCREEN_ON`/`ACTION_SCREEN_OFF` hook W3 uses and replays a suppressed update
+  on the transition. Tests: `NotificationDisplayGateTest` (floor, unknown state,
+  backwards clock, first post, a 600-poll "Instant" sequence across the floor).
 
 ### W1 — Every poll copies the whole UI buffer on the main thread (P0, CPU)
 
@@ -166,7 +201,7 @@ Impact classes are coarse: **CPU** (main/worker CPU time or allocation churn),
 - **Status: implemented.** `monitoring/DisplayTriggerGate.kt` is the pure rule
   (listen while interactive; listen when the platform cannot answer).
   `MonitoringService` registers `ACTION_SCREEN_ON`/`ACTION_SCREEN_OFF` and calls
-  `syncBatteryTriggerWithDisplay()` on each transition and once after registering, so
+  `syncDisplayState()` on each transition and once after registering, so
   a service created with the screen already off holds no battery receiver. Cadence,
   the spacing floor, the startup burst and `RECEIVER_NOT_EXPORTED` are untouched.
   Tests: `DisplayTriggerGateTest`.
@@ -295,6 +330,7 @@ All three are implemented; the rows record what shipped and what still needs a d
 | W1 immutable chunked sample series + copy-free publish (main-thread CPU/alloc every poll, screen-off included) — **done** | M | None for measurement; the `subscriptionCount` gate was rejected because it would make `latest` stale | initial-implementation §3, §5 |
 | W2 wake-lock re-arm only when the lease is half spent — **done** | S | None, provided the timed lease stays | initial-implementation §5 |
 | W3 display-gate the battery trigger — **done** | M | None to cadence (floor already equals the interval); only plug/unplug visibility can lag ≤1 interval with the screen off | initial-implementation §5, README bullet |
+| W11 floor routine notification posts to 60 s while no display is interactive — **done** | S | None: a post is not a sample, and the floor equals the published default, so screen-off freshness is unchanged for default-rate users | initial-implementation §5, device-acceptance note |
 
 ### P1 — worth doing
 
@@ -342,7 +378,12 @@ them into fewer samples, fewer writes or a slower clock:
    lease or drop the lock while "recording".
 6. **The timed notification throttle, its confidence/state bypasses and the default
    60 s.** `NotificationUpdatePolicy` (`monitoring/NotificationUpdatePolicy.kt`) is
-   a published behaviour with unit tests.
+   a published behaviour with unit tests. The display floor in §2 W11
+   (`NotificationDisplayGate`)
+   wraps it from outside and must never replace it: the policy alone decides
+   *content* freshness, the floor only decides whether an allowed post is worth
+   making while nothing can display it, and it must stay at or below the 60 s
+   default so a screen-off notification never becomes staler than that default.
 7. **Batch size 4 samples / 60 s and the atomic batch+summary transaction.**
    Enlarging it widens the documented abrupt-kill loss tail.
 8. **The synchronous freshness clock** (`ui/FreshnessClock.kt`,
@@ -366,6 +407,10 @@ to be pointed at a 21 JDK explicitly — the same version CI uses in `android.ym
 `testDebugUnitTest`: 535 tests, 0 failures, including `SampleSeriesTest` (9),
 `WakeLockLeaseTest` (7) and `DisplayTriggerGateTest` (3). `lintDebug` and
 `assembleDebug` also pass, with no new lint findings in the touched files.
+
+W11 repeated that run: 569 tests, 0 failures, now including
+`NotificationDisplayGateTest` (9), with `lintDebug` and `assembleDebug` green and no
+new lint findings.
 
 The scratch port of `SampleSeries` used before Gradle could run compared 360 000
 randomized append/evict steps against an `ArrayList` reference and found no
@@ -392,6 +437,11 @@ do not stack P0 changes into one build you then measure once.
    `onReceive`. That counter is an instrument for the experiment, not shipped code,
    and it must be removed before acceptance. Record deliveries per hour at each
    cadence, screen on and screen off, per OEM.
+3b. Notification-post census (W11): count `notify()` calls the same way, with a
+   DEBUG-only counter in `updateNotification`. At "Instant" with the screen off a
+   1 s run must show ~60/h instead of 3600/h, and turning the screen on must show one
+   immediate post. Compare SystemUI wakeups in `dumpsys batterystats` with a
+   screen-on run at the same rate; the two must now differ, which they did not before.
 4. Poll accounting: compare `summary.sampleCount` and elapsed recording time from the
    CSV per run. W1/W3/W9 must leave the **sample count and cadence unchanged**; if
    the count moved, the change is wrong, not the measurement.

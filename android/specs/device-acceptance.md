@@ -150,6 +150,14 @@ foreground/background time, and results for each run; do not upload private data
       16s). Changing the choice refreshes now, without an extra sample, calibration
       reset, history gap or wake-lock change. Check System UI behaviour on-device;
       Android may coalesce/defer what it displays.
+- [ ] Screen-off notification floor: with the screen off, no rate refreshes the
+      notification more than once per minute, so a screen-off "Instant" run posts
+      ~10-60 an hour instead of 1800-3600 and must not be compared against a
+      screen-on run. Turning the screen on reposts immediately with the current
+      reading, so the shade never opens onto a value from before the screen came on;
+      verify the first content seen after a >=10 min screen-off spell is current.
+      Instant is the highest SystemUI cost choice, so acceptance runs at different
+      rates are not comparable.
 - [ ] Important readiness/availability/error changes bypass every chosen rate.
       Notification Stop acts directly without opening a screen, ends recording,
       flushes the pending tail and removes the ongoing notification.

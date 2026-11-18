@@ -67,7 +67,10 @@ See the [implementation specification](specs/initial-implementation.md),
   stays 60s, including upgrades without a saved choice. Timed rates post on the
   first reading at/after the interval (e.g. 15s can be 16s with 2s polling).
   Changes apply immediately and persist; important status transitions bypass the
-  rate. No extra polls, timers or wake locks; Android can defer/coalesce display.
+  rate. With no display interactive the rate is floored to one post per minute, and a
+  suppressed update is posted as soon as the screen comes on, so a screen-off
+  notification is never staler than the 60s default. No extra polls, timers or wake
+  locks; Android can defer/coalesce display.
 - Android 13+ notification-permission handling.
 - Private service using the `specialUse` foreground-service type, not `health`.
 - Public BatteryManager/sticky-broadcast readings; unavailable properties stay

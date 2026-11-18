@@ -94,22 +94,39 @@ class MonitoringService : Service() {
     private var batteryReceiverRegistered = false
 
     /**
-     * Display transitions, used only to gate [batteryReceiver].
+     * Display transitions, used to gate [batteryReceiver] and routine notification
+     * posts.
      *
-     * The battery trigger cuts presentation latency; with the screen off nobody is
-     * looking and a delivery cannot add a sample anyway (see [DisplayTriggerGate]).
-     * These two broadcasts are transition-only, so this listener costs nothing per
-     * poll.
+     * Both are presentation work: the battery trigger cuts presentation latency, and
+     * notification updates refresh a row nobody is looking at while the display is
+     * off (see [DisplayTriggerGate] and [NotificationDisplayGate]). These two
+     * broadcasts are transition-only, so this listener costs nothing per poll.
      */
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF -> syncBatteryTriggerWithDisplay()
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF -> syncDisplayState()
             }
         }
     }
 
     private var screenReceiverRegistered = false
+
+    /**
+     * Last known display state; `null` until the platform has been asked. Kept for
+     * [NotificationDisplayGate], which allows the post when it cannot answer.
+     */
+    private var displayInteractive: Boolean? = null
+
+    /**
+     * A routine notification update was suppressed because no display was
+     * interactive. The next interactive display posts it immediately so the shade
+     * never opens onto a value from before the screen came on.
+     */
+    private var notificationRepostPending = false
+
+    /** Last post that actually happened, for [NotificationDisplayGate]'s floor. */
+    private var lastPostedElapsed = 0L
 
     /** Gates the per-poll wake-lock IPC; see [WakeLockLease]. */
     private val wakeLockLease = WakeLockLease(WAKE_LOCK_LEASE_MILLIS)
@@ -740,7 +757,7 @@ class MonitoringService : Service() {
             return
         }
         // The registration above cannot tell whether the screen was already off.
-        syncBatteryTriggerWithDisplay()
+        syncDisplayState()
     }
 
     private fun unregisterScreenReceiver() {
@@ -754,20 +771,32 @@ class MonitoringService : Service() {
     }
 
     /**
-     * Aligns the battery-trigger registration with the current display state.
+     * Aligns both display-dependent behaviours with the current display state.
      *
      * Called on both transitions and once after registering, because creating the
      * service with the screen already off would otherwise leave an unused receiver
      * registered for the whole session. Dropping it changes no sample: the cadence and
      * the spacing floor are untouched, so only plug/unplug *visibility* can lag by up
      * to one interval while the screen was off.
+     *
+     * An update suppressed by [NotificationDisplayGate] is replayed here, before the
+     * user can read the shade, using the latest published sample: no extra poll, and
+     * the notification content is never older than the screen-on moment.
      */
-    private fun syncBatteryTriggerWithDisplay() {
+    private fun syncDisplayState() {
         val interactive = getSystemService(PowerManager::class.java)?.isInteractive
+        displayInteractive = interactive
         if (DisplayTriggerGate.shouldListenBatteryTrigger(interactive)) {
             registerBatteryReceiver()
         } else {
             unregisterBatteryReceiver()
+        }
+        if (interactive == true && notificationRepostPending) {
+            notificationRepostPending = false
+            // Never resurrect a notification a stop has already removed.
+            if (phase == Phase.RUNNING || phase == Phase.STARTING) {
+                updateNotification(sample = repository.state.value.latest, force = true)
+            }
         }
     }
 
@@ -1057,6 +1086,12 @@ class MonitoringService : Service() {
      * interpreted instantaneous power/current with its confidence: Estimated must
      * become confirmed at once, and an ambiguous completed check must not look
      * stuck. The 60 s counter average deliberately has no say here.
+     *
+     * A post while no display is interactive is floored to one per minute
+     * ([NotificationDisplayGate]) and remembered for a replay on the next transition.
+     * The gate sits after the policy but before any bookkeeping below, so those fields
+     * keep describing what the user can actually see, which is what the policy's
+     * bypass comparisons are about.
      */
     private fun updateNotification(sample: BatterySample?, force: Boolean) {
         val now = SystemClock.elapsedRealtime()
@@ -1074,8 +1109,18 @@ class MonitoringService : Service() {
         ) {
             return
         }
+        if (!NotificationDisplayGate.shouldPost(
+                isDisplayInteractive = displayInteractive,
+                nowElapsedMillis = now,
+                lastPostElapsedMillis = lastPostedElapsed,
+            )
+        ) {
+            notificationRepostPending = true
+            return
+        }
         if (!canPostNotifications()) return
         lastNotifyElapsed = now
+        lastPostedElapsed = now
         notificationShowsSample = sample != null
         notificationShowsLive = hasLive
         notificationReadingState = sample.liveReading()
