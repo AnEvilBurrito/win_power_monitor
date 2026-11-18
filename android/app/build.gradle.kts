@@ -14,8 +14,8 @@ android {
         applicationId = "io.github.anevilburrito.wpm"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.7.2-rc.1"
+        versionCode = 14
+        versionName = "0.7.3-rc.1"
     }
 
     buildTypes {
