@@ -341,6 +341,12 @@ object BatteryTelemetryDecoder {
         provisional: Boolean = false,
         startupPollCount: Int = 0,
         startupCheckComplete: Boolean = false,
+        /**
+         * `PowerManager.isInteractive` for this poll, or null when it was not read.
+         * Recorded, never inferred: [BatterySample.displayOn] keeps the null so the
+         * split can report unknown time instead of assuming a screen state.
+         */
+        displayOn: Boolean? = null,
     ): BatterySample {
         val rawCurrent = supportedCurrentOf(raw.currentMicroamps)
         val rawAverage = supportedCurrentOf(raw.averageMicroamps)
@@ -372,6 +378,7 @@ object BatteryTelemetryDecoder {
             temperatureC = celsiusOf(raw.temperatureTenths),
             condition = conditionOf(raw.health)?.name,
             plugged = raw.isPlugged,
+            displayOn = displayOn,
             // An untrusted polarity must not be labelled confidently as charging.
             flow = if (inconsistent) FlowState.UNKNOWN else flowOf(instantMicroamps, raw.status),
             currentMicroamps = instantMicroamps,

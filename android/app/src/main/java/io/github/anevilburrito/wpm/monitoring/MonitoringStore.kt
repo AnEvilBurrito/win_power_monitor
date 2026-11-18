@@ -50,6 +50,18 @@ internal class MonitoringStore(
                 maximumMagnitudeWatts REAL,
                 sampleCount INTEGER NOT NULL DEFAULT 0,
                 gapCount INTEGER NOT NULL DEFAULT 0,
+                displayOnSeconds REAL NOT NULL DEFAULT 0,
+                displayOffSeconds REAL NOT NULL DEFAULT 0,
+                displayUnknownSeconds REAL NOT NULL DEFAULT 0,
+                displayOnWallSeconds REAL NOT NULL DEFAULT 0,
+                displayOffWallSeconds REAL NOT NULL DEFAULT 0,
+                displayUnknownWallSeconds REAL NOT NULL DEFAULT 0,
+                displayOnDischargeSeconds REAL NOT NULL DEFAULT 0,
+                displayOffDischargeSeconds REAL NOT NULL DEFAULT 0,
+                displayOnOutWh REAL NOT NULL DEFAULT 0,
+                displayOnInWh REAL NOT NULL DEFAULT 0,
+                displayOffOutWh REAL NOT NULL DEFAULT 0,
+                displayOffInWh REAL NOT NULL DEFAULT 0,
                 historyTruncated INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
@@ -69,6 +81,7 @@ internal class MonitoringStore(
                 condition TEXT,
                 plugged INTEGER,
                 flow TEXT NOT NULL,
+                displayOn INTEGER,
                 currentMicroamps INTEGER,
                 voltageMillivolts INTEGER,
                 rawCurrentMicroamps INTEGER,
@@ -128,6 +141,27 @@ internal class MonitoringStore(
                 db.delete(TABLE_CAPACITY, null, null)
             }
         }
+        if (SchemaMigration.addsDisplayStateColumns(oldVersion)) {
+            // Version 5 records which display state a sample was read in, and how a
+            // session's time and energy split between screen on and screen off.
+            // Additive and zeroed: an older sample reads back as "not recorded"
+            // rather than as a claim that the screen was off, and an older summary
+            // keeps its real totals while reporting no split.
+            SchemaMigration.V5_SAMPLE_COLUMNS.forEach { column ->
+                addSampleColumn(db, column.name, column.definition)
+            }
+            SchemaMigration.V5_SESSION_COLUMNS.forEach { column ->
+                addColumn(db, TABLE_SESSIONS, column)
+            }
+        }
+        if (SchemaMigration.addsDischargeSecondsColumns(oldVersion)) {
+            // Version 6 adds the discharging time of each bucket, the denominator of
+            // the discharge-only average. A v5 session keeps its (mixed) totals and
+            // reports no discharge average: the basis is not comparable.
+            SchemaMigration.V6_SESSION_COLUMNS.forEach { column ->
+                addColumn(db, TABLE_SESSIONS, column)
+            }
+        }
     }
 
     /**
@@ -161,6 +195,12 @@ internal class MonitoringStore(
     private fun addSampleColumn(db: SQLiteDatabase, column: String, definition: String) {
         if (hasColumn(db, TABLE_SAMPLES, column)) return
         db.execSQL("ALTER TABLE $TABLE_SAMPLES ADD COLUMN $column $definition")
+    }
+
+    /** `ALTER TABLE sessions ADD COLUMN`, skipped when the column already exists. */
+    private fun addColumn(db: SQLiteDatabase, table: String, column: SchemaMigration.Column) {
+        if (hasColumn(db, table, column.name)) return
+        db.execSQL("ALTER TABLE $table ADD COLUMN ${column.name} ${column.definition}")
     }
 
     private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean {
@@ -409,6 +449,18 @@ internal class MonitoringStore(
         put(COL_MAX_MAGNITUDE, summary.maximumMagnitudeWatts)
         put(COL_SAMPLE_COUNT, summary.sampleCount)
         put(COL_GAP_COUNT, summary.gapCount)
+        put(COL_DISPLAY_ON_SECONDS, summary.displayOnSeconds)
+        put(COL_DISPLAY_OFF_SECONDS, summary.displayOffSeconds)
+        put(COL_DISPLAY_UNKNOWN_SECONDS, summary.displayUnknownSeconds)
+        put(COL_DISPLAY_ON_WALL_SECONDS, summary.displayOnWallSeconds)
+        put(COL_DISPLAY_OFF_WALL_SECONDS, summary.displayOffWallSeconds)
+        put(COL_DISPLAY_UNKNOWN_WALL_SECONDS, summary.displayUnknownWallSeconds)
+        put(COL_DISPLAY_ON_DISCHARGE_SECONDS, summary.displayOnDischargeSeconds)
+        put(COL_DISPLAY_OFF_DISCHARGE_SECONDS, summary.displayOffDischargeSeconds)
+        put(COL_DISPLAY_ON_OUT_WH, summary.displayOnOutWh)
+        put(COL_DISPLAY_ON_IN_WH, summary.displayOnInWh)
+        put(COL_DISPLAY_OFF_OUT_WH, summary.displayOffOutWh)
+        put(COL_DISPLAY_OFF_IN_WH, summary.displayOffInWh)
     }
 
     private fun sampleValues(sessionId: Long, sample: BatterySample) = ContentValues().apply {
@@ -423,6 +475,7 @@ internal class MonitoringStore(
         put(COL_SAMPLE_CONDITION, sample.condition)
         put(COL_SAMPLE_PLUGGED, sample.plugged?.let { if (it) 1 else 0 })
         put(COL_SAMPLE_FLOW, sample.flow.name)
+        put(COL_SAMPLE_DISPLAY_ON, sample.displayOn?.let { if (it) 1 else 0 })
         put(COL_SAMPLE_CURRENT, sample.currentMicroamps)
         put(COL_SAMPLE_VOLTAGE, sample.voltageMillivolts)
         put(COL_SAMPLE_RAW_CURRENT, sample.rawCurrentMicroamps)
@@ -455,6 +508,24 @@ internal class MonitoringStore(
         maximumMagnitudeWatts = cursor.nullableDouble(COL_MAX_MAGNITUDE),
         sampleCount = cursor.getInt(cursor.getColumnIndexOrThrow(COL_SAMPLE_COUNT)),
         gapCount = cursor.getInt(cursor.getColumnIndexOrThrow(COL_GAP_COUNT)),
+        displayOnSeconds = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_ON_SECONDS)),
+        displayOffSeconds = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_OFF_SECONDS)),
+        displayUnknownSeconds = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_UNKNOWN_SECONDS)),
+        displayOnWallSeconds = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_ON_WALL_SECONDS)),
+        displayOffWallSeconds = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_OFF_WALL_SECONDS)),
+        displayUnknownWallSeconds = cursor.getDouble(
+            cursor.getColumnIndexOrThrow(COL_DISPLAY_UNKNOWN_WALL_SECONDS),
+        ),
+        displayOnDischargeSeconds = cursor.getDouble(
+            cursor.getColumnIndexOrThrow(COL_DISPLAY_ON_DISCHARGE_SECONDS),
+        ),
+        displayOffDischargeSeconds = cursor.getDouble(
+            cursor.getColumnIndexOrThrow(COL_DISPLAY_OFF_DISCHARGE_SECONDS),
+        ),
+        displayOnOutWh = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_ON_OUT_WH)),
+        displayOnInWh = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_ON_IN_WH)),
+        displayOffOutWh = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_OFF_OUT_WH)),
+        displayOffInWh = cursor.getDouble(cursor.getColumnIndexOrThrow(COL_DISPLAY_OFF_IN_WH)),
     )
 
     private fun Cursor.nullableLong(column: String): Long? {
@@ -479,6 +550,7 @@ internal class MonitoringStore(
         private val condition = cursor.getColumnIndexOrThrow(COL_SAMPLE_CONDITION)
         private val plugged = cursor.getColumnIndexOrThrow(COL_SAMPLE_PLUGGED)
         private val flow = cursor.getColumnIndexOrThrow(COL_SAMPLE_FLOW)
+        private val displayOn = cursor.getColumnIndexOrThrow(COL_SAMPLE_DISPLAY_ON)
         private val current = cursor.getColumnIndexOrThrow(COL_SAMPLE_CURRENT)
         private val voltage = cursor.getColumnIndexOrThrow(COL_SAMPLE_VOLTAGE)
         private val rawCurrent = cursor.getColumnIndexOrThrow(COL_SAMPLE_RAW_CURRENT)
@@ -509,6 +581,7 @@ internal class MonitoringStore(
             } else {
                 runCatching { FlowState.valueOf(cursor.getString(flow)) }.getOrDefault(FlowState.UNKNOWN)
             },
+            displayOn = if (cursor.isNull(displayOn)) null else cursor.getInt(displayOn) != 0,
             currentMicroamps = if (cursor.isNull(current)) null else cursor.getLong(current),
             voltageMillivolts = if (cursor.isNull(voltage)) null else cursor.getInt(voltage),
             rawCurrentMicroamps = if (cursor.isNull(rawCurrent)) null else cursor.getLong(rawCurrent),
@@ -541,7 +614,8 @@ internal class MonitoringStore(
         /**
          * Version 4 adds instant-reading provenance columns and the capacity
          * method marker; it invalidates only the superseded capacity aggregate.
-         * Every bump so far is additive for history.
+         * Version 5 adds the display-state columns. Every bump so far is additive
+         * for history.
          */
         const val VERSION = SchemaMigration.VERSION
 
@@ -585,6 +659,22 @@ internal class MonitoringStore(
         const val COL_GAP_COUNT = "gapCount"
         const val COL_HISTORY_TRUNCATED = "historyTruncated"
 
+        /** Display-state split of a session summary; see [SchemaMigration.V5_SESSION_COLUMNS]. */
+        const val COL_DISPLAY_ON_SECONDS = "displayOnSeconds"
+        const val COL_DISPLAY_OFF_SECONDS = "displayOffSeconds"
+        const val COL_DISPLAY_UNKNOWN_SECONDS = "displayUnknownSeconds"
+        const val COL_DISPLAY_ON_WALL_SECONDS = "displayOnWallSeconds"
+        const val COL_DISPLAY_OFF_WALL_SECONDS = "displayOffWallSeconds"
+        const val COL_DISPLAY_UNKNOWN_WALL_SECONDS = "displayUnknownWallSeconds"
+
+        /** Discharging time per bucket; the denominator of the discharge-only average. */
+        const val COL_DISPLAY_ON_DISCHARGE_SECONDS = "displayOnDischargeSeconds"
+        const val COL_DISPLAY_OFF_DISCHARGE_SECONDS = "displayOffDischargeSeconds"
+        const val COL_DISPLAY_ON_OUT_WH = "displayOnOutWh"
+        const val COL_DISPLAY_ON_IN_WH = "displayOnInWh"
+        const val COL_DISPLAY_OFF_OUT_WH = "displayOffOutWh"
+        const val COL_DISPLAY_OFF_IN_WH = "displayOffInWh"
+
         const val COL_SAMPLE_ID = "id"
         const val COL_SAMPLE_SESSION = "sessionId"
         const val COL_SAMPLE_TIME = "timestampMillis"
@@ -597,6 +687,8 @@ internal class MonitoringStore(
         const val COL_SAMPLE_CONDITION = "condition"
         const val COL_SAMPLE_PLUGGED = "plugged"
         const val COL_SAMPLE_FLOW = "flow"
+        /** Null when the display state was not recorded (history before v5). */
+        const val COL_SAMPLE_DISPLAY_ON = "displayOn"
         const val COL_SAMPLE_CURRENT = "currentMicroamps"
         const val COL_SAMPLE_VOLTAGE = "voltageMillivolts"
         const val COL_SAMPLE_RAW_CURRENT = "rawCurrentMicroamps"

@@ -32,6 +32,7 @@ class CsvExporterTest {
         currentPolarityAdjusted: Boolean = false,
         currentSource: CurrentSource = CurrentSource.NONE,
         cycleCount: Int? = null,
+        displayOn: Boolean? = null,
     ) = BatterySample(
         timestampMillis = 1_000_000L + elapsed * 1000,
         elapsedRealtimeMillis = elapsed,
@@ -55,6 +56,7 @@ class CsvExporterTest {
         currentPolarityAdjusted = currentPolarityAdjusted,
         currentSource = currentSource,
         cycleCount = cycleCount,
+        displayOn = displayOn,
         gapBefore = gapBefore,
         reason = reason,
     )
@@ -113,9 +115,12 @@ class CsvExporterTest {
         // The platform average is kept for exports only, next to the instant reading.
         assertTrue(header.contains("raw_average_microamps"))
         assertTrue(header.contains("cycle_count"))
-        // The auxiliary counter-average metric is appended, so no existing index moves.
+        // The auxiliary counter-average metric is appended, so no existing index moves;
+        // the display state follows it for the same reason.
         assertTrue(
-            header.endsWith("reason,average_current_A,estimated_average_power_W,average_window_ms"),
+            header.endsWith(
+                "reason,average_current_A,estimated_average_power_W,average_window_ms,display_on",
+            ),
         )
     }
 
@@ -250,6 +255,19 @@ class CsvExporterTest {
         assertEquals("0", calibrated[13])
         assertEquals("1", calibrated[14])
         assertEquals("1", calibrated[15])
+    }
+
+    @Test
+    fun displayStateIsExportedAsATriState() {
+        val column = CsvExporter.COLUMNS.size - 1
+        assertEquals("display_on", CsvExporter.COLUMNS.last())
+        assertEquals("1", CsvExporter.row(sample(displayOn = true)).split(",")[column])
+        assertEquals("0", CsvExporter.row(sample(displayOn = false)).split(",")[column])
+        // A poll that did not record a display state stays blank, never "off".
+        val bare = BatterySample(timestampMillis = 0L, elapsedRealtimeMillis = 0L, flow = FlowState.UNKNOWN)
+        assertEquals("", CsvExporter.row(bare).split(",")[column])
+        // The column is appended, so every pre-existing index keeps its meaning.
+        assertEquals("UNKNOWN", CsvExporter.row(bare).split(",")[22])
     }
 
     @Test

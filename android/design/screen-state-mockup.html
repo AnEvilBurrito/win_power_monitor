@@ -1,0 +1,418 @@
+<!doctype html>
+<!--
+  WPM / Android UI study 03 — power split by display state (Session screen).
+
+  DESIGN REVIEW ARTIFACT ONLY.
+  - Every reading, duration and energy on this page is synthetic and hand-authored.
+    Nothing is measured, polled or fetched.
+  - No network request, no external font/script/stylesheet: the page reuses the
+    shared design sheet (mobile-mockup.css) and opens directly from disk.
+  - Not the Android implementation, not intended to ship in a WebView. The app
+    stays native Compose; this page reviews the one screen the feature touches.
+  - Fixtures reconcile: screen-off + screen-on + unknown = observed, and the bucket
+    energies sum to the Battery out / Battery in cells.
+  - Strings mirror the shipped formatter (WpmFormat.durationCompact / energy), so
+    "48m 00s" and "968.0 mWh" are what the app actually prints.
+  - Scope: Session screen only. The Monitor block and chart bands were dropped in
+    review.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WPM / Android UI study 03 — power split by display state</title>
+<link rel="stylesheet" href="mobile-mockup.css">
+<style>
+  /* ---------------------------------------------------------------
+     Page-local additions only. Every palette role, device chrome,
+     energy grid, coverage track, data list and note style comes from
+     mobile-mockup.css untouched.
+  --------------------------------------------------------------- */
+  body { min-width: 0; }
+  .study-header { max-width: 1980px; margin: 0 auto; padding: 26px 24px 18px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px 22px; border-bottom: 1px solid #d4d8db; }
+  .board { max-width: 1980px; margin: 0 auto; padding: 26px 24px 10px; }
+  .study-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 400px)); gap: 46px 34px; align-items: start; }
+  figure { margin: 0; min-width: 0; }
+  figcaption { font: 10px/1.6 var(--mono); color: var(--board-muted); padding-top: 14px; }
+  figcaption b { display: block; font: 600 12px/1.5 "Segoe UI", system-ui, sans-serif; color: var(--board-ink); padding-bottom: 4px; }
+  /* Full screens grow to their content instead of scrolling inside the frame,
+     so a reviewer sees the whole screen at once. */
+  .device.full { height: auto; }
+  .device.full .app-scroll { overflow: visible; }
+  /* The split section is a second breakdown of the same energy, so it reuses the
+     energy grid with a single rule above it instead of a bordered block. */
+  .energy-grid.split { border-top: 1px solid var(--rule); border-bottom: 0; padding: 16px 0 6px; margin-top: 4px; }
+  .energy-grid.split > div { gap: 6px; }
+  .energy-grid.split small.mono { font-size: 10px; line-height: 1.55; }
+  .energy-grid.split .none { color: var(--muted); }
+  .spec { width: 100%; border-collapse: collapse; font: 12px/1.6 "Segoe UI", system-ui, sans-serif; margin-top: 4px; }
+  .spec th { text-align: left; font: 600 10px/1.5 var(--mono); letter-spacing: .8px; text-transform: uppercase; color: var(--board-muted); border-bottom: 1px solid #cbd0d6; padding: 8px 12px 8px 0; }
+  .spec td { vertical-align: top; border-bottom: 1px solid #e2e5e8; padding: 10px 12px 10px 0; color: var(--board-muted); }
+  .spec td:first-child { color: var(--board-ink); font-weight: 600; }
+  .spec code, .q-panel code { font-family: var(--mono); font-size: 11px; background: #e8eaed; border-radius: 3px; padding: 1px 4px; color: #2b3444; }
+  .study-section { max-width: 1980px; margin: 0 auto; padding: 40px 24px 0; }
+  .study-section > h2 { font-size: 17px; letter-spacing: -.3px; margin: 0 0 14px; }
+  .q-panel { max-width: 980px; font-size: 13px; line-height: 1.75; color: var(--board-muted); padding: 0 0 0 20px; }
+  .q-panel li { margin-bottom: 10px; }
+  .study-footer { max-width: 1980px; margin: 0 auto; padding: 30px 24px 40px; font-size: 11px; color: var(--board-muted); border-top: 1px solid #d4d8db; }
+</style>
+</head>
+<body data-theme="storm">
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 4v16h18M6 15l4-6 4 3 6-7"/></symbol>
+      <symbol id="i-session" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2M9 9h6M9 13h6M9 17h4"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+      <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 14v6h14v-6"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="study-header">
+    <a class="wordmark" href="README.md">wpm<span>/ android</span></a>
+    <span class="review-label">UI STUDY 03 / POWER SPLIT BY DISPLAY STATE / SESSION SCREEN</span>
+  </header>
+
+  <main class="board">
+    <p class="eyebrow" style="margin-bottom:6px">DESIGN PROPOSAL</p>
+    <h1 style="font-size:clamp(26px,2.4vw,34px);letter-spacing:-1px;margin:0 0 14px;max-width:24ch">Screen off, screen on: what each state actually costs.</h1>
+    <p class="intro-copy" style="max-width:78ch;font-size:14px;line-height:1.7;color:var(--board-muted);margin:0 0 8px">
+      One new section on the Session screen, built from the components already in use — the energy grid, the
+      coverage track, the data list, the attention note. All fixtures reconcile: the two buckets add up to the
+      session totals, so the split can never quietly contradict the number above it.
+    </p>
+
+    <div class="study-grid" style="margin-top:36px">
+
+      <!-- ============================ 1 ============================ -->
+      <figure>
+        <div class="device instrument full">
+          <div class="system-bar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>▴ ▴ ▰</span></div>
+          <header class="app-header">
+            <div class="app-brand"><span class="app-wordmark">wpm<span class="prompt">_</span></span><span class="app-subtitle">BATTERY FLOW</span></div>
+            <button class="icon-button" aria-label="Monitoring settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+          </header>
+          <div class="app-scroll">
+            <section class="screen">
+              <p class="eyebrow in-app">LOCAL RECORDING</p>
+              <h2 class="screen-title">This session</h2>
+              <p class="screen-description">Started 14:02 · recording in the background</p>
+              <div class="session-duration mono">04:02:00<span>elapsed time</span></div>
+              <div class="energy-grid">
+                <div><span>Battery out</span><strong>1.102 <small>Wh</small></strong></div>
+                <div><span>Battery in</span><strong>0.000 <small>Wh</small></strong></div>
+              </div>
+
+              <div class="coverage-section">
+                <div class="section-heading"><h3>Observed coverage</h3><strong class="mono">99%</strong></div>
+                <div class="coverage-track" aria-hidden="true"><span style="width:99%"></span></div>
+                <p>4h 00m sampled <span class="separator">/</span> 2m missing</p>
+                <p class="subtle">Energy totals integrate live readings, including startup estimates, and exclude missing time and correction gaps.</p>
+              </div>
+
+              <!-- NEW: the split -->
+              <section class="coverage-section" aria-labelledby="split-1">
+                <div class="section-heading"><h3 id="split-1">Screen state</h3><strong class="mono">99% · 99%</strong></div>
+                <div class="energy-grid split">
+                  <div><span>Screen off</span><strong>42.0 <small>mW</small></strong><small class="mono">3h 12m · 134.4 mWh out</small></div>
+                  <div><span>Screen on</span><strong>1.21 <small>W</small></strong><small class="mono">48m 00s · 968.0 mWh out</small></div>
+                </div>
+                <p>Averages use discharging time only; charging and sampling gaps are excluded.</p>
+              </section>
+
+              <dl class="data-list compact">
+                <div><dt>Session average power (absolute)</dt><dd>276 mW</dd></div>
+                <div><dt>Minimum / maximum</dt><dd>8.00 mW / 3.10 W</dd></div>
+                <div><dt>Recorded samples</dt><dd>7 204</dd></div>
+                <div><dt>Sampling gaps</dt><dd>1</dd></div>
+              </dl>
+
+              <div class="section-heading timeline-heading"><h3>Session events</h3><span class="subtle">Today</span></div>
+              <ol class="timeline">
+                <li><time>14:02</time><div><strong>Recording started</strong><span>High-resolution mode</span></div></li>
+                <li><time>16:58</time><div><strong>No samples during sleep</strong><span>Gap · 2m</span></div></li>
+              </ol>
+              <button class="secondary-action full-width"><svg class="icon small"><use href="#i-export"/></svg>Export CSV</button>
+              <p class="footnote">Includes timestamps, signed power readings, screen state and gap markers.</p>
+            </section>
+          </div>
+          <div class="recording-controls"><button class="record-button"><svg class="icon small"><use href="#i-stop"/></svg><span>Stop recording</span></button><p>Keeps recording when you leave the app</p></div>
+          <nav class="bottom-nav" aria-label="Main screens">
+            <button data-screen="monitor"><svg class="icon"><use href="#i-chart"/></svg><span>Monitor</span></button>
+            <button data-screen="session" aria-current="page"><svg class="icon"><use href="#i-session"/></svg><span>Session</span></button>
+            <button data-screen="diagnostics"><svg class="icon"><use href="#i-info"/></svg><span>Diagnostics</span></button>
+          </nav>
+          <div class="gesture-bar" aria-hidden="true"><span></span></div>
+        </div>
+        <figcaption>
+          <b>01 · Healthy high-resolution session</b>
+          Off first: the drain people open this screen for. Each bucket carries its own coverage in the heading,
+          and the sub-lines add up to Battery out above (134.4 + 968.0 mWh = 1.102 Wh). No drain-rate rows: nothing
+          in this session charged, so they would only repeat the cells.
+        </figcaption>
+      </figure>
+
+      <!-- ============================ 2 ============================ -->
+      <figure>
+        <div class="device instrument full">
+          <div class="system-bar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>▴ ▴ ▰</span></div>
+          <header class="app-header">
+            <div class="app-brand"><span class="app-wordmark">wpm<span class="prompt">_</span></span><span class="app-subtitle">BATTERY FLOW</span></div>
+            <button class="icon-button" aria-label="Monitoring settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+          </header>
+          <div class="app-scroll">
+            <section class="screen">
+              <p class="eyebrow in-app">LOCAL RECORDING</p>
+              <h2 class="screen-title">This session</h2>
+              <p class="screen-description">Started 09:10 · recording in the background</p>
+              <div class="session-duration mono">05:20:00<span>elapsed time</span></div>
+              <div class="energy-grid">
+                <div><span>Battery out</span><strong>94.00 <small>mWh</small></strong></div>
+                <div><span>Battery in</span><strong>0.000 <small>Wh</small></strong></div>
+              </div>
+
+              <div class="coverage-section">
+                <div class="section-heading"><h3>Observed coverage</h3><strong class="mono">32%</strong></div>
+                <div class="coverage-track" aria-hidden="true"><span style="width:32%"></span></div>
+                <p>1h 44m sampled <span class="separator">/</span> 3h 36m missing</p>
+              </div>
+
+              <section class="coverage-section" aria-labelledby="split-2">
+                <div class="section-heading"><h3 id="split-2">Screen state</h3><strong class="mono">15% · 94%</strong></div>
+                <div class="energy-grid split">
+                  <div><span>Screen off</span><strong>38.0 <small>mW</small></strong><small class="mono">38m 00s of 4h 10m · low coverage</small></div>
+                  <div><span>Screen on</span><strong>1.06 <small>W</small></strong><small class="mono">1h 06m · 70.00 mWh out</small></div>
+                </div>
+                <p class="sample-message attention" style="margin-top:14px">Screen-off time is poorly sampled: 38m 00s of 4h 10m. Doze suspends polling in low-impact mode — high-resolution mode gives a reliable screen-off average.</p>
+                <p>Averages use discharging time only; charging and sampling gaps are excluded.</p>
+              </section>
+
+              <dl class="data-list compact">
+                <div><dt>Session average power (absolute)</dt><dd>54.00 mW</dd></div>
+                <div><dt>Minimum / maximum</dt><dd>5.00 mW / 2.80 W</dd></div>
+              </dl>
+
+              <div class="section-heading timeline-heading"><h3>Session events</h3><span class="subtle">Today</span></div>
+              <ol class="timeline">
+                <li><time>09:10</time><div><strong>Recording started</strong><span>Low-impact mode</span></div></li>
+                <li><time>09:25</time><div><strong>No samples during sleep</strong><span>Gap · 3h 36m across two doze windows</span></div></li>
+              </ol>
+            </section>
+          </div>
+          <div class="recording-controls"><button class="record-button"><svg class="icon small"><use href="#i-stop"/></svg><span>Stop recording</span></button><p>Keeps recording when you leave the app</p></div>
+          <nav class="bottom-nav" aria-label="Main screens">
+            <button data-screen="monitor"><svg class="icon"><use href="#i-chart"/></svg><span>Monitor</span></button>
+            <button data-screen="session" aria-current="page"><svg class="icon"><use href="#i-session"/></svg><span>Session</span></button>
+            <button data-screen="diagnostics"><svg class="icon"><use href="#i-info"/></svg><span>Diagnostics</span></button>
+          </nav>
+          <div class="gesture-bar" aria-hidden="true"><span></span></div>
+        </div>
+        <figcaption>
+          <b>02 · Low-impact session with doze gaps</b>
+          The case where the feature must not lie. Under 50% coverage the sub-line swaps energy for
+          “38m 00s of 4h 10m · low coverage” and an attention note names the fix. The average is still printed — it is
+          real, just thin. Coverage uses the time actually attributed to each state, so doze lowers the screen-off
+          figure instead of blaming screen-on. Coverage is the only trigger: a short but well-sampled bucket (three
+          minutes at 96%) is a solid average and is not warned about, because its duration already shows in the
+          sub-line.
+        </figcaption>
+      </figure>
+
+      <!-- ============================ 3 ============================ -->
+      <figure>
+        <div class="device instrument full">
+          <div class="system-bar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>▴ ▴ ▰</span></div>
+          <header class="app-header">
+            <div class="app-brand"><span class="app-wordmark">wpm<span class="prompt">_</span></span><span class="app-subtitle">BATTERY FLOW</span></div>
+            <button class="icon-button" aria-label="Monitoring settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+          </header>
+          <div class="app-scroll">
+            <section class="screen">
+              <p class="eyebrow in-app">LOCAL RECORDING</p>
+              <h2 class="screen-title">This session</h2>
+              <p class="screen-description">Started 18:10 · recording in the background</p>
+              <div class="session-duration mono">00:00:42<span>elapsed time</span></div>
+              <div class="energy-grid">
+                <div><span>Battery out</span><strong>14.00 <small>mWh</small></strong></div>
+                <div><span>Battery in</span><strong>0.000 <small>Wh</small></strong></div>
+              </div>
+
+              <section class="coverage-section" aria-labelledby="split-3">
+                <div class="section-heading"><h3 id="split-3">Screen state</h3><strong class="mono">— · 100%</strong></div>
+                <div class="energy-grid split">
+                  <div><span>Screen off</span><strong class="none">—</strong><small class="mono">no screen-off time yet</small></div>
+                  <div><span>Screen on</span><strong>1.18 <small>W</small></strong><small class="mono">42s · 14.00 mWh out</small></div>
+                </div>
+                <p>Averages use discharging time only; charging and sampling gaps are excluded.</p>
+              </section>
+
+              <dl class="data-list compact">
+                <div><dt>Session average power (absolute)</dt><dd>1.18 W</dd></div>
+                <div><dt>Minimum / maximum</dt><dd>1.16 W / 1.21 W</dd></div>
+              </dl>
+            </section>
+          </div>
+          <div class="recording-controls"><button class="record-button"><svg class="icon small"><use href="#i-stop"/></svg><span>Stop recording</span></button><p>Keeps recording when you leave the app</p></div>
+          <nav class="bottom-nav" aria-label="Main screens">
+            <button data-screen="monitor"><svg class="icon"><use href="#i-chart"/></svg><span>Monitor</span></button>
+            <button data-screen="session" aria-current="page"><svg class="icon"><use href="#i-session"/></svg><span>Session</span></button>
+            <button data-screen="diagnostics"><svg class="icon"><use href="#i-info"/></svg><span>Diagnostics</span></button>
+          </nav>
+          <div class="gesture-bar" aria-hidden="true"><span></span></div>
+        </div>
+        <figcaption>
+          <b>03 · No screen-off time yet</b>
+          Nothing is fabricated as a zero: an empty bucket shows an em dash and a reason, and its detail line keeps a
+          two-line reserve, so the data list below never shifts when a screen-off stretch begins.
+        </figcaption>
+      </figure>
+
+      <!-- ============================ 4 ============================ -->
+      <figure>
+        <div class="device instrument full">
+          <div class="system-bar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>▴ ▴ ▰</span></div>
+          <header class="app-header">
+            <div class="app-brand"><span class="app-wordmark">wpm<span class="prompt">_</span></span><span class="app-subtitle">BATTERY FLOW</span></div>
+            <button class="icon-button" aria-label="Monitoring settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+          </header>
+          <div class="app-scroll">
+            <section class="screen">
+              <p class="eyebrow in-app">LOCAL RECORDING</p>
+              <h2 class="screen-title">This session</h2>
+              <p class="screen-description">Started 23:40 · saved session</p>
+              <div class="session-duration mono">07:20:00<span>elapsed time</span></div>
+              <div class="energy-grid">
+                <div><span>Battery out</span><strong>140.0 <small>mWh</small></strong></div>
+                <div><span>Battery in</span><strong>1.300 <small>Wh</small></strong></div>
+              </div>
+
+              <section class="coverage-section" aria-labelledby="split-4">
+                <div class="section-heading"><h3 id="split-4">Screen state</h3><strong class="mono">100% · 100%</strong></div>
+                <div class="energy-grid split">
+                  <div><span>Screen off</span><strong>18.0 <small>mW</small></strong><small class="mono">5h 00m · 90.00 mWh out</small></div>
+                  <div><span>Screen on</span><strong>40.0 <small>mW</small></strong><small class="mono">30m 00s · 20.00 mWh out</small></div>
+                </div>
+                <p>Averages use discharging time only; charging and sampling gaps are excluded.</p>
+              </section>
+
+              <dl class="data-list compact">
+                <div><dt>Session average power (absolute)</dt><dd>196.0 mW</dd></div>
+                <div><dt>Minimum / maximum</dt><dd>12.00 mW / 1.90 W</dd></div>
+              </dl>
+            </section>
+          </div>
+          <div class="recording-controls"><button class="record-button start"><svg class="icon small"><use href="#i-play"/></svg><span>Start recording</span></button><p>Keeps recording when you leave the app</p></div>
+          <nav class="bottom-nav" aria-label="Main screens">
+            <button data-screen="monitor"><svg class="icon"><use href="#i-chart"/></svg><span>Monitor</span></button>
+            <button data-screen="session" aria-current="page"><svg class="icon"><use href="#i-session"/></svg><span>Session</span></button>
+            <button data-screen="diagnostics"><svg class="icon"><use href="#i-info"/></svg><span>Diagnostics</span></button>
+          </nav>
+          <div class="gesture-bar" aria-hidden="true"><span></span></div>
+        </div>
+        <figcaption>
+          <b>04 · Overnight charge (mixed flow)</b>
+          Charging happens with the screen off all the time, and a bucket that contains it must not report the
+          charger's output as consumption. Here the phone charged 1.30 Wh and discharged 90 mWh during screen-off
+          time; only the 5 hours actually spent discharging are used, so the cell reads 18.0 mW. Charge appears in
+          the session's Battery in total, never in a bucket line.
+        </figcaption>
+      </figure>
+    </div>
+  </main>
+
+  <!-- ============================ spec ============================ -->
+  <section class="study-section" aria-labelledby="spec-title">
+    <h2 id="spec-title">Specification</h2>
+    <table class="spec">
+      <thead>
+        <tr><th style="width:22%">Element</th><th style="width:30%">Text and format</th><th>State rules and source</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Section heading</td>
+          <td><code>Screen state</code> · trailing <code>99% · 99%</code></td>
+          <td>Trailing value is off-coverage · on-coverage. Coverage is discharging time over discharging plus
+            missing time, so observed charging time is not counted against either bucket. A bucket that never
+            discharged renders <code>—</code>. The heading never changes with state.</td>
+        </tr>
+        <tr>
+          <td>Bucket cell</td>
+          <td><code>Screen off</code> / <code>18.0 mW</code></td>
+          <td>Discharge-only average <code>outWh / dischargeSeconds</code>: the mean power drawn while discharging
+            in that state. Charging is excluded from the numerator and the denominator, so a plugged-in session
+            cannot report the charger's power as consumption. Always positive, so the global
+            absolute/signed toggle does not apply. <code>—</code> when the bucket never discharged.</td>
+        </tr>
+        <tr>
+          <td>Bucket sub-line</td>
+          <td><code>5h 00m · 90.00 mWh out</code></td>
+          <td>Discharging duration and discharged energy only. Low-coverage form replaces the energy with
+            <code>38m 00s of 4h 10m · low coverage</code>. A bucket that only charged reads
+            <code>charging only · no discharge measured</code>; an unmeasured bucket reads
+            <code>no screen-off time yet</code>.</td>
+        </tr>
+        <tr>
+          <td>Low-coverage note</td>
+          <td>“Screen-off time is poorly sampled: 38m 00s of 4h 10m. Doze suspends polling in low-impact mode —
+            high-resolution mode gives a reliable screen-off average.”</td>
+          <td>Existing attention style (warning role, left rule). Trigger: coverage below 50% for either bucket,
+            naming the offending bucket. Duration alone never triggers it — a 3-minute screen-on stretch at 96%
+            coverage is a fine average, and its length is already in the sub-line. The doze sentence appears only for
+            the screen-off bucket of a low-impact session.</td>
+        </tr>
+        <tr>
+          <td>Empty / legacy</td>
+          <td><code>no screen-off time yet</code> · <code>discharge time not recorded</code> · “Screen state is
+            recorded from version 5 onward; earlier sessions were measured without it.”</td>
+          <td>Zero observed seconds in a bucket is reported as absent, never as <code>0 mW</code>. A session whose
+            buckets are both empty but whose elapsed time is not is pre-v5 history: the note replaces any split
+            rather than recomputing one from stored totals. A v5 session has real out-energy but no stored
+            discharging time, so it reports no bucket average and says <code>discharge time not recorded</code>
+            rather than reusing the mixed basis or claiming it only charged.</td>
+        </tr>
+        <tr>
+          <td>CSV column</td>
+          <td><code>display_on</code></td>
+          <td>Appended after the existing provenance columns: <code>1</code> on, <code>0</code> off, blank when the
+            poll recorded no display state.</td>
+        </tr>
+        <tr>
+          <td>Invariant</td>
+          <td><code>off + on + unknown = observed</code></td>
+          <td>Session totals are unchanged by the feature: Battery out / in keep integrating both directions for
+            the whole session, and the buckets' out-energy must add up to Battery out. Their averages are
+            discharge-only, so they are a drain comparison and not a second session average. A mismatch in the
+            energy sum is a bug, not a rounding choice.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="study-section" aria-labelledby="q-title">
+    <h2 id="q-title">Decisions taken (adjustable)</h2>
+    <ol class="q-panel">
+      <li><b>Bucket metric:</b> discharge-only average (<code>outWh / dischargeSeconds</code>). A magnitude average
+        including charge was tried first and reported 5.28 W for an idle screen-off bucket that happened to be
+        charging; the charger's output is not the phone's consumption. The drain-rate rows it required are gone,
+        because the bucket number now is that rate.</li>
+      <li><b>Bucket order:</b> screen off first, matching the question people open the screen for.</li>
+      <li><b>Sub-line content:</b> discharging duration and discharged energy; charge never appears in a bucket
+        line. The session's own Battery in total still reports it.</li>
+      <li><b>Low-coverage threshold:</b> 50% coverage, and the average still prints beside the note because it is
+        real, just thin. An observed-duration floor was removed after a device report: 3m 20s of screen-on time at
+        96% coverage is not poorly sampled.</li>
+      <li><b>Interval attribution:</b> the interval is booked to the state of the sample that closes it, so a
+        transition can misattribute at most one interval. Splitting exactly on broadcast timestamps remains a later
+        refinement.</li>
+    </ol>
+  </section>
+
+  <footer class="study-footer">
+    Design only. Synthetic values, no network access.
+    Implemented in schema v5 (<code>displayOn</code> plus the summary split); see
+    <code>specs/screen-state-split.md</code>. <a href="README.md">Design brief</a>
+  </footer>
+</body>
+</html>

@@ -405,6 +405,272 @@ class PresentationTest {
         assertFalse(empty.maximum.available)
     }
 
+    /** Session summary with the display-state split the accumulator would produce. */
+    private fun splitSummary(
+        elapsed: Double,
+        offSeconds: Double = 0.0,
+        offDischarge: Double = offSeconds,
+        offWall: Double = 0.0,
+        offOutWh: Double = 0.0,
+        offInWh: Double = 0.0,
+        onSeconds: Double = 0.0,
+        onDischarge: Double = onSeconds,
+        onWall: Double = 0.0,
+        onOutWh: Double = 0.0,
+        onInWh: Double = 0.0,
+    ) = SessionSummary(
+        elapsedSeconds = elapsed,
+        observedSeconds = offSeconds + onSeconds,
+        outWh = offOutWh + onOutWh,
+        inWh = offInWh + onInWh,
+        displayOnSeconds = onSeconds,
+        displayOffSeconds = offSeconds,
+        displayOnWallSeconds = onWall,
+        displayOffWallSeconds = offWall,
+        displayOnDischargeSeconds = onDischarge,
+        displayOffDischargeSeconds = offDischarge,
+        displayOnOutWh = onOutWh,
+        displayOnInWh = onInWh,
+        displayOffOutWh = offOutWh,
+        displayOffInWh = offInWh,
+    )
+
+    @Test fun theSplitReportsEachBucketsDischargeAverageAndTime() {
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 14_400.0,
+                offSeconds = 11_520.0,
+                offWall = 11_520.0,
+                offOutWh = 0.1344,
+                onSeconds = 2_880.0,
+                onWall = 2_880.0,
+                onOutWh = 0.968,
+            ),
+            lowImpact = false,
+        )
+        assertEquals("100% \u00b7 100%", split.coverage)
+        assertEquals("Screen off", split.off.label)
+        assertEquals(UnitQuantity("42.0", "mW"), split.off.average)
+        assertEquals("3h 12m \u00b7 134.4 mWh out", split.off.detail)
+        assertEquals("Screen on", split.on.label)
+        assertEquals(UnitQuantity("1.21", "W"), split.on.average)
+        assertEquals("48m 00s \u00b7 968.0 mWh out", split.on.detail)
+        assertTrue(split.off.hasTime)
+        assertNull(split.lowCoverageNote)
+        assertNull(split.untrackedNote)
+    }
+
+    @Test fun theDischargeAverageExcludesChargingTime() {
+        // The reported session: the screen-off bucket both charged (2.168 Wh in) and
+        // discharged (184 mWh out) over 26m 43s. Averaging everything gave 5.28 W,
+        // which is the charger's output, not the phone's consumption.
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 1_603.0,
+                offSeconds = 1_603.0,
+                offDischarge = 1_200.0,
+                offWall = 1_603.0,
+                offOutWh = 0.184,
+                offInWh = 2.168,
+                onSeconds = 310.0,
+                onDischarge = 240.0,
+                onWall = 310.0,
+                onOutWh = 0.1633,
+                onInWh = 0.0436,
+            ),
+            lowImpact = false,
+        )
+        // 184 mWh over the 20 minutes actually spent discharging.
+        assertEquals(UnitQuantity("552.0", "mW"), split.off.average)
+        assertEquals("20m 00s \u00b7 184.0 mWh out", split.off.detail)
+        // 163.3 mWh over 4 minutes discharging, not over the 5m 10s observed.
+        assertEquals(UnitQuantity("2.45", "W"), split.on.average)
+        assertEquals("4m 00s \u00b7 163.3 mWh out", split.on.detail)
+        // Charging is excluded from the denominator, so coverage stays honest.
+        assertEquals("100% \u00b7 100%", split.coverage)
+        assertNull(split.lowCoverageNote)
+        // Charge never leaks into a bucket line; the session total still reports it.
+        assertFalse(split.off.detail.contains(" in"))
+        assertFalse(split.on.detail.contains(" in"))
+    }
+
+    @Test fun aV5SessionKeepsItsEnergyButClaimsNoDischargeAverage() {
+        // Recorded by the previous schema: out-energy is real, the discharging time was
+        // never stored. It must not be relabelled "charging only", and no average may
+        // be derived from the mixed basis.
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 900.0,
+                offSeconds = 900.0,
+                offDischarge = 0.0,
+                offWall = 900.0,
+                offOutWh = 0.2,
+            ),
+            lowImpact = false,
+        )
+        assertEquals(WpmFormat.DASH, split.off.average.text)
+        assertEquals("discharge time not recorded", split.off.detail)
+        assertFalse(split.off.hasTime)
+        // The energy itself is untouched and still shown as a session total elsewhere.
+        assertEquals(0.2, splitSummary(elapsed = 900.0, offOutWh = 0.2).outWh, 1e-12)
+    }
+
+    @Test fun aBucketThatOnlyChargedReportsNoDischargeAverage() {
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 600.0,
+                offSeconds = 600.0,
+                offDischarge = 0.0,
+                offWall = 600.0,
+                offInWh = 1.2,
+            ),
+            lowImpact = false,
+        )
+        // Nothing was discharged, so there is no drain rate to report: an em dash and
+        // an explicit reason, never 0 mW and never the charging power.
+        assertEquals(WpmFormat.DASH, split.off.average.text)
+        assertEquals("charging only \u00b7 no discharge measured", split.off.detail)
+        assertFalse(split.off.hasTime)
+        assertEquals("\u2014 \u00b7 \u2014", split.coverage)
+        assertNull(split.lowCoverageNote)
+    }
+
+    @Test fun aThinScreenOffBucketIsLabelledInsteadOfTrusted() {
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 19_200.0,
+                offSeconds = 2_280.0,
+                offWall = 15_000.0,
+                onSeconds = 3_960.0,
+                onWall = 4_200.0,
+                onOutWh = 0.070,
+            ),
+            lowImpact = true,
+        )
+        // Doze swallowed most of the screen-off window, so its own coverage drops while
+        // the screen-on bucket keeps the coverage it actually had.
+        assertEquals("15% \u00b7 94%", split.coverage)
+        assertEquals("38m 00s of 4h 10m \u00b7 low coverage", split.off.detail)
+        assertTrue(split.off.lowCoverage)
+        assertEquals("1h 06m \u00b7 70.00 mWh out", split.on.detail)
+        assertFalse(split.on.lowCoverage)
+        val note = split.lowCoverageNote!!
+        assertTrue(note.startsWith("Screen-off time is poorly sampled: 38m 00s of 4h 10m."))
+        assertTrue(note.contains("high-resolution mode"))
+    }
+
+    @Test fun theDozeHintOnlyAppliesToTheOffBucketOfALowImpactSession() {
+        val highResolution = screenSplitView(
+            splitSummary(
+                elapsed = 19_200.0,
+                offSeconds = 2_280.0,
+                offWall = 15_000.0,
+                onSeconds = 3_960.0,
+                onWall = 4_200.0,
+            ),
+            lowImpact = false,
+        )
+        // High resolution already keeps the CPU awake; naming doze would be wrong there.
+        assertFalse(highResolution.lowCoverageNote!!.contains("high-resolution mode"))
+        // A thin screen-on bucket is a different fault and never blames doze either.
+        val thinOn = screenSplitView(
+            splitSummary(
+                elapsed = 19_200.0,
+                offSeconds = 15_000.0,
+                offWall = 15_000.0,
+                onSeconds = 120.0,
+                onWall = 4_200.0,
+            ),
+            lowImpact = true,
+        )
+        assertTrue(thinOn.lowCoverageNote!!.startsWith("Screen-on time is poorly sampled:"))
+        assertFalse(thinOn.lowCoverageNote.contains("Doze"))
+    }
+
+    @Test fun drainRatesAreNotRepeatedAsSeparateRows() {
+        // The bucket number IS the discharge rate now, so there is no second figure to
+        // disambiguate. This pins the removal: a charging bucket must not resurrect it.
+        val mixed = screenSplitView(
+            splitSummary(
+                elapsed = 27_600.0,
+                offSeconds = 24_600.0,
+                offDischarge = 18_000.0,
+                offWall = 24_600.0,
+                offOutWh = 0.090,
+                offInWh = 1.30,
+                onSeconds = 1_800.0,
+                onWall = 1_800.0,
+                onOutWh = 0.020,
+            ),
+            lowImpact = false,
+        )
+        // 90 mWh over 5 h discharging, with the 1.30 Wh of charge ignored entirely.
+        assertEquals(UnitQuantity("18.0", "mW"), mixed.off.average)
+        assertEquals("5h 00m \u00b7 90.00 mWh out", mixed.off.detail)
+        assertEquals(UnitQuantity("40.0", "mW"), mixed.on.average)
+        assertNull(mixed.lowCoverageNote)
+    }
+
+    @Test fun aShortButWellCoveredBucketIsNotCalledPoorlySampled() {
+        // The device report that exposed the old rule: 3m 20s of screen-on time at
+        // 96 % coverage was flagged as "poorly sampled" only because it was short.
+        // Duration is already in the sub-line; the warning is about coverage alone.
+        val split = screenSplitView(
+            splitSummary(
+                elapsed = 1_390.0,
+                offSeconds = 1_182.0,
+                offWall = 1_182.0,
+                offOutWh = 0.1795,
+                onSeconds = 200.0,
+                onWall = 208.0,
+                onOutWh = 0.1147,
+            ),
+            lowImpact = false,
+        )
+        assertEquals("100% \u00b7 96%", split.coverage)
+        assertFalse(split.on.lowCoverage)
+        assertNull(split.lowCoverageNote)
+        assertEquals("3m 20s \u00b7 114.7 mWh out", split.on.detail)
+    }
+
+    @Test fun aSessionWithoutDisplayStateIsLabelledNotZeroed() {
+        // Restored history from before schema v5: real totals, no split.
+        val split = screenSplitView(
+            SessionSummary(elapsedSeconds = 5_520.0, observedSeconds = 5_400.0, outWh = 0.1),
+            lowImpact = false,
+        )
+        assertEquals("\u2014 \u00b7 \u2014", split.coverage)
+        assertFalse(split.off.hasTime)
+        assertFalse(split.on.hasTime)
+        assertEquals(WpmFormat.DASH, split.off.average.text)
+        assertEquals("no screen-off time yet", split.off.detail)
+        assertNull(split.lowCoverageNote)
+        assertTrue(split.untrackedNote!!.contains("version 5"))
+    }
+
+    @Test fun anEmptySessionClaimsNeitherStateNorAnUpgradeNote() {
+        val split = screenSplitView(SessionSummary(), lowImpact = false)
+        assertEquals("no screen-on time yet", split.on.detail)
+        // Nothing has happened yet, so there is no legacy history to explain either.
+        assertNull(split.untrackedNote)
+    }
+
+    @Test fun aLiveSessionWithAnUnreadableDisplayStateIsNotCalledLegacy() {
+        // PowerManager was unavailable, so every interval landed in the unknown bucket:
+        // this is a new session, not restored pre-v5 history.
+        val summary = SessionSummary(
+            elapsedSeconds = 600.0,
+            observedSeconds = 600.0,
+            outWh = 0.002,
+            displayUnknownSeconds = 600.0,
+            displayUnknownWallSeconds = 600.0,
+        )
+        val split = screenSplitView(summary, lowImpact = false)
+        assertNull(split.untrackedNote)
+        assertFalse(split.off.hasTime)
+        assertFalse(split.on.hasTime)
+    }
+
     @Test fun sessionEventsComeFromRecordedSamplesNewestFirst() {
         val summary = SessionSummary(startedAtMillis = 1_700_000_000_000L, elapsedSeconds = 120.0)
         val samples = listOf(

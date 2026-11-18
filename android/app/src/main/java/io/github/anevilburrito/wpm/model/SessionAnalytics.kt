@@ -19,6 +19,13 @@ import kotlin.math.max
  * for diagnostics and legacy exports; it is not a live summary's default.
  * History that is already stored keeps its own summary fields and is never
  * recomputed with a different metric.
+ *
+ * Each observed interval is also booked to the display state of the sample that
+ * closes it ([BatterySample.displayOn]), so a session reports the same energy split
+ * by screen state. A screen transition between two polls can therefore misattribute
+ * at most one interval — seconds against minutes of screen-off time — and samples
+ * predating schema v5 book their seconds to the unknown bucket without claiming any
+ * energy for a state that was never recorded.
  */
 class SessionAccumulator(
     private val id: Long,
@@ -37,6 +44,18 @@ class SessionAccumulator(
     private var maximumMagnitude: Double? = null
     private var samples = 0
     private var gaps = 0
+    private var displayOnSeconds = 0.0
+    private var displayOffSeconds = 0.0
+    private var displayUnknownSeconds = 0.0
+    private var displayOnOutWattSeconds = 0.0
+    private var displayOnInWattSeconds = 0.0
+    private var displayOffOutWattSeconds = 0.0
+    private var displayOffInWattSeconds = 0.0
+    private var displayOnWallSeconds = 0.0
+    private var displayOffWallSeconds = 0.0
+    private var displayUnknownWallSeconds = 0.0
+    private var displayOnDischargeSeconds = 0.0
+    private var displayOffDischargeSeconds = 0.0
 
     fun add(sample: BatterySample, intervalSeconds: Int): SessionSummary {
         samples++
@@ -51,35 +70,101 @@ class SessionAccumulator(
         val before = previous
         if (before != null) {
             val seconds = (sample.elapsedRealtimeMillis - before.elapsedRealtimeMillis) / 1000.0
+            // Wall time is booked before the gap test, because a swallowed interval is
+            // still time the phone spent in that display state: it belongs in the
+            // coverage denominator of that bucket, not in the other bucket's.
+            if (seconds > 0.0) {
+                when (sample.displayOn) {
+                    true -> displayOnWallSeconds += seconds
+                    false -> displayOffWallSeconds += seconds
+                    null -> displayUnknownWallSeconds += seconds
+                }
+            }
             val oldWatts = before.let(samplePowerWatts)?.takeIf { it.isFinite() }
             val discontinuity = sample.gapBefore || seconds <= 0 || seconds > gapThresholdMillis(intervalSeconds) / 1000.0
             if (discontinuity || watts == null || oldWatts == null) {
                 gaps++
             } else {
                 observedSeconds += seconds
-                if (oldWatts >= 0 && watts >= 0) {
-                    inWattSeconds += (oldWatts + watts) * 0.5 * seconds
-                } else if (oldWatts <= 0 && watts <= 0) {
-                    outWattSeconds += -(oldWatts + watts) * 0.5 * seconds
-                } else {
-                    // Split the linearly interpolated zero crossing, rather than
-                    // abs(net integral), which would erase simultaneous out/in.
-                    val firstSeconds = seconds * abs(oldWatts) / (abs(oldWatts) + abs(watts))
-                    val firstArea = abs(oldWatts) * firstSeconds * 0.5
-                    val secondArea = abs(watts) * (seconds - firstSeconds) * 0.5
-                    if (oldWatts < 0) {
-                        outWattSeconds += firstArea
-                        inWattSeconds += secondArea
-                    } else {
-                        inWattSeconds += firstArea
-                        outWattSeconds += secondArea
+                val areas = intervalAreas(oldWatts, watts, seconds)
+                outWattSeconds += areas.outWattSeconds
+                inWattSeconds += areas.inWattSeconds
+                // Attribute the same interval, and therefore exactly the same energy,
+                // to the display state of the sample that closes it. A transition
+                // between two polls is misattributed by at most one interval; the
+                // alternative (assuming the start of the interval) is no better, and
+                // splitting on broadcast timestamps is a later refinement.
+                when (sample.displayOn) {
+                    true -> {
+                        displayOnSeconds += seconds
+                        displayOnOutWattSeconds += areas.outWattSeconds
+                        displayOnInWattSeconds += areas.inWattSeconds
+                        displayOnDischargeSeconds += areas.outSeconds
                     }
+                    false -> {
+                        displayOffSeconds += seconds
+                        displayOffOutWattSeconds += areas.outWattSeconds
+                        displayOffInWattSeconds += areas.inWattSeconds
+                        displayOffDischargeSeconds += areas.outSeconds
+                    }
+                    // History written before schema v5. Its seconds are still counted
+                    // so the buckets reconcile, but no energy is claimed for a state
+                    // that was never recorded.
+                    null -> displayUnknownSeconds += seconds
                 }
             }
         }
         previous = sample
         return snapshot()
     }
+
+    /**
+     * Out/in areas of one interval plus the time spent in each direction, with the
+     * zero crossing split as before.
+     *
+     * [outSeconds] is what a discharge-only average divides by: the time genuinely
+     * spent discharging. Charging never enters it, so a charging interval cannot
+     * dilute a drain figure.
+     */
+    private class IntervalAreas(
+        val outWattSeconds: Double,
+        val inWattSeconds: Double,
+        val outSeconds: Double,
+    )
+
+    private fun intervalAreas(oldWatts: Double, watts: Double, seconds: Double): IntervalAreas =
+        if (oldWatts >= 0 && watts >= 0) {
+            IntervalAreas(
+                outWattSeconds = 0.0,
+                inWattSeconds = (oldWatts + watts) * 0.5 * seconds,
+                outSeconds = 0.0,
+            )
+        } else if (oldWatts <= 0 && watts <= 0) {
+            IntervalAreas(
+                outWattSeconds = -(oldWatts + watts) * 0.5 * seconds,
+                inWattSeconds = 0.0,
+                outSeconds = seconds,
+            )
+        } else {
+            // Split the linearly interpolated zero crossing, rather than
+            // abs(net integral), which would erase simultaneous out/in.
+            val firstSeconds = seconds * abs(oldWatts) / (abs(oldWatts) + abs(watts))
+            val firstArea = abs(oldWatts) * firstSeconds * 0.5
+            val secondArea = abs(watts) * (seconds - firstSeconds) * 0.5
+            if (oldWatts < 0) {
+                IntervalAreas(
+                    outWattSeconds = firstArea,
+                    inWattSeconds = secondArea,
+                    outSeconds = firstSeconds,
+                )
+            } else {
+                IntervalAreas(
+                    outWattSeconds = secondArea,
+                    inWattSeconds = firstArea,
+                    outSeconds = seconds - firstSeconds,
+                )
+            }
+        }
 
     fun snapshot(endedAtMillis: Long? = null): SessionSummary = SessionSummary(
         id = id,
@@ -97,6 +182,18 @@ class SessionAccumulator(
         maximumMagnitudeWatts = maximumMagnitude,
         sampleCount = samples,
         gapCount = gaps,
+        displayOnSeconds = displayOnSeconds,
+        displayOffSeconds = displayOffSeconds,
+        displayUnknownSeconds = displayUnknownSeconds,
+        displayOnWallSeconds = displayOnWallSeconds,
+        displayOffWallSeconds = displayOffWallSeconds,
+        displayUnknownWallSeconds = displayUnknownWallSeconds,
+        displayOnDischargeSeconds = displayOnDischargeSeconds,
+        displayOffDischargeSeconds = displayOffDischargeSeconds,
+        displayOnOutWh = displayOnOutWattSeconds / 3600.0,
+        displayOnInWh = displayOnInWattSeconds / 3600.0,
+        displayOffOutWh = displayOffOutWattSeconds / 3600.0,
+        displayOffInWh = displayOffInWattSeconds / 3600.0,
     )
 }
 

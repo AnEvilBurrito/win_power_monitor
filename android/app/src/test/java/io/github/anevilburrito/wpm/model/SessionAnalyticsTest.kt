@@ -4,10 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionAnalyticsTest {
-    private fun sample(seconds: Long, watts: Double?, gap: Boolean = false) = BatterySample(
+    private fun sample(
+        seconds: Long,
+        watts: Double?,
+        gap: Boolean = false,
+        display: Boolean? = null,
+    ) = BatterySample(
         timestampMillis = 1_000_000L + seconds * 1000,
         elapsedRealtimeMillis = seconds * 1000,
         watts = watts,
+        displayOn = display,
         gapBefore = gap,
     )
 
@@ -199,6 +205,94 @@ class SessionAnalyticsTest {
         assertEquals(75_000L, gapThresholdMillis(30))
         assertFalse(isSampleStale(sample(100, 1.0), 145_000, 1))
         assertTrue(isSampleStale(sample(100, 1.0), 145_001, 1))
+    }
+
+    @Test fun displayBucketsSumToTheObservedTotal() {
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -0.004, display = true), 2)
+        acc.add(sample(2, -0.004, display = true), 2)
+        acc.add(sample(4, -0.05, display = false), 2)
+        val summary = acc.add(sample(6, -0.05, display = false), 2)
+        assertEquals(6.0, summary.observedSeconds, 1e-12)
+        // Both intervals that close on a screen-off sample are booked to it: the
+        // 2 s→4 s interval is already the screen-off one.
+        assertEquals(2.0, summary.displayOnSeconds, 1e-12)
+        assertEquals(4.0, summary.displayOffSeconds, 1e-12)
+        assertEquals(0.0, summary.displayUnknownSeconds, 1e-12)
+        assertEquals(
+            summary.observedSeconds,
+            summary.displayOnSeconds + summary.displayOffSeconds + summary.displayUnknownSeconds,
+            1e-12,
+        )
+        // The buckets are a second reading of the same energy, never a second total.
+        assertEquals(summary.outWh, summary.displayOnOutWh + summary.displayOffOutWh, 1e-15)
+        assertEquals(summary.inWh, summary.displayOnInWh + summary.displayOffInWh, 1e-15)
+        assertEquals(0.008 / 3600.0, summary.displayOnOutWh, 1e-15)
+        assertEquals(0.154 / 3600.0, summary.displayOffOutWh, 1e-15)
+        // Both buckets discharged for their whole observed time here.
+        assertEquals(2.0, summary.displayOnDischargeSeconds, 1e-12)
+        assertEquals(4.0, summary.displayOffDischargeSeconds, 1e-12)
+    }
+
+    @Test fun anIntervalSpanningATransitionBelongsToTheClosingState() {
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -1.0, display = true), 2)
+        val summary = acc.add(sample(2, -1.0, display = false), 2)
+        // At most one interval is misattributed per transition; the total is intact.
+        assertEquals(0.0, summary.displayOnSeconds, 0.0)
+        assertEquals(2.0, summary.displayOffSeconds, 1e-12)
+        assertEquals(2.0 / 3600.0, summary.displayOffOutWh, 1e-15)
+    }
+
+    @Test fun gapTimeIsBookedToNeitherState() {
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -1.0, display = true), 2)
+        val summary = acc.add(sample(120, -1.0, display = false), 2)
+        assertEquals(0.0, summary.observedSeconds, 0.0)
+        assertEquals(0.0, summary.displayOnSeconds, 0.0)
+        assertEquals(0.0, summary.displayOffSeconds, 0.0)
+        assertEquals(0.0, summary.displayOffOutWh, 0.0)
+        assertEquals(1, summary.gapCount)
+    }
+
+    @Test fun samplesWithoutADisplayStateNeverClaimAState() {
+        // History written before schema v5: the time is accounted for, no state and
+        // no energy is invented for it.
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -1.0), 2)
+        val summary = acc.add(sample(2, -1.0), 2)
+        assertEquals(2.0, summary.observedSeconds, 1e-12)
+        assertEquals(2.0, summary.displayUnknownSeconds, 1e-12)
+        assertEquals(0.0, summary.displayOnSeconds + summary.displayOffSeconds, 0.0)
+        assertEquals(0.0, summary.displayOnOutWh + summary.displayOffOutWh, 0.0)
+        assertEquals(2.0 / 3600.0, summary.outWh, 1e-15)
+    }
+
+    @Test fun aZeroCrossingInsideOneBucketKeepsBothDirectionsInThatBucket() {
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -4.0, display = false), 30)
+        val summary = acc.add(sample(30, 4.0, display = false), 30)
+        assertEquals(30.0 / 3600.0, summary.displayOffOutWh, 1e-15)
+        assertEquals(30.0 / 3600.0, summary.displayOffInWh, 1e-15)
+        assertEquals(0.0, summary.displayOnOutWh, 0.0)
+        assertEquals(0.0, summary.displayOnInWh, 0.0)
+        // The crossing splits the interval evenly, so exactly half of it was
+        // discharging: the discharge-only denominator must not be the whole 30 s.
+        assertEquals(15.0, summary.displayOffDischargeSeconds, 1e-12)
+        assertEquals(0.0, summary.displayOnDischargeSeconds, 0.0)
+    }
+
+    @Test fun chargingTimeNeverEntersADischargeDenominator() {
+        val acc = SessionAccumulator(1, 1_000_000, 0)
+        acc.add(sample(0, -0.5, display = true), 10)
+        acc.add(sample(10, 4.0, display = true), 10)
+        val summary = acc.add(sample(20, 4.0, display = true), 10)
+        // The bucket observed 20 s, but only the crossing's out-portion discharged:
+        // 10 s * 0.5 / 4.5. The charging rest must not dilute the drain rate.
+        val expectedDischargeSeconds = 10.0 * 0.5 / 4.5
+        assertEquals(20.0, summary.displayOnSeconds, 1e-12)
+        assertEquals(expectedDischargeSeconds, summary.displayOnDischargeSeconds, 1e-12)
+        assertEquals(0.5 * expectedDischargeSeconds * 0.5 / 3600.0, summary.displayOnOutWh, 1e-15)
     }
 
     /** One sample carrying both a raw instant reading and an optional auxiliary average. */

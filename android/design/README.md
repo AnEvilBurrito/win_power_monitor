@@ -196,3 +196,26 @@ counted discharge readings, with the bin count and width in the header.
 
 Contract: [../specs/power-distribution.md](../specs/power-distribution.md). Nothing
 is implemented; the Kotlin names in that document are a proposal.
+
+# Android UI study 03: power split by display state
+
+Open **[screen-state-mockup.html](screen-state-mockup.html)** directly in a browser.
+Same rules as studies 01 and 02: synthetic readings only, no battery APIs, no
+network, and no WebView shipping intent. The page links the shared
+[mobile-mockup.css](mobile-mockup.css); only the study board and the split section
+are page-local additions.
+
+The study is one new Session-screen section reporting average power separately for
+screen-off and screen-on time. It covers a healthy high-resolution session, a
+low-impact session whose screen-off time is mostly doze gaps, a session with no
+screen-off time yet, and an overnight charge where a bucket average contains
+charge. Bucket energies are fixtures that add up to the session's Battery out /
+Battery in cells, so the split cannot contradict the totals above it.
+
+Scope was narrowed in review: the Session screen only. A Monitor-screen block and
+screen-off bands in the chart were dropped, so no other screen changes. The study
+is implemented — schema v5 adds `BatterySample.displayOn`
+(`PowerManager.isInteractive`, maintained from the screen broadcasts) and the
+summary split, integrated per bucket in
+`SessionAnalytics.SessionAccumulator`. Contract:
+[../specs/screen-state-split.md](../specs/screen-state-split.md).

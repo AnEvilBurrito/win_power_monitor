@@ -319,6 +319,211 @@ fun statsView(summary: SessionSummary, absolute: Boolean): StatsView = StatsView
     averageLabel = if (absolute) "Session average power (absolute)" else "Session average power (signed)",
 )
 
+/**
+ * One bucket of the display-state split: a discharge average and one explanatory line.
+ *
+ * [hasTime] is false when no discharging interval was attributed to this state; the UI
+ * then shows an em dash and [detail] says why, instead of printing `0 mW` for a state
+ * that was never measured.
+ */
+data class ScreenStateCell(
+    val label: String,
+    val average: UnitQuantity,
+    val detail: String,
+    val hasTime: Boolean,
+    val lowCoverage: Boolean,
+)
+
+/**
+ * Discharge power split by display state, ready to render.
+ *
+ * Every number here is discharge-only: charging is excluded from the average and from
+ * its denominator, because a charging bucket would otherwise report the charger's
+ * power as the phone's consumption. Session totals stay untouched - they still carry
+ * both directions - so this is a comparison of drain, not a second total.
+ *
+ * [lowCoverageNote] is the only warning; [untrackedNote] explains history recorded
+ * before display state existed and is mutually exclusive with real bucket data.
+ */
+data class ScreenSplitView(
+    val coverage: String,
+    val off: ScreenStateCell,
+    val on: ScreenStateCell,
+    val lowCoverageNote: String?,
+    val untrackedNote: String?,
+)
+
+/**
+ * Below this discharge coverage a bucket average is labelled rather than trusted.
+ *
+ * Coverage is the only warning trigger. A short bucket is not a badly sampled one: a
+ * screen-on stretch of three minutes at 96 % coverage is a solid average, and its
+ * duration is already stated in the sub-line. Warning about it would call honest data
+ * "poorly sampled" and train people to ignore the note.
+ */
+const val MIN_SPLIT_COVERAGE_PERCENT = 50
+
+/**
+ * Splits the session summary into screen-off and screen-on *discharge* averages.
+ *
+ * The bucket number is `outWh / dischargeSeconds`: the mean power drawn while the
+ * phone was discharging in that state. Charging intervals are excluded entirely - not
+ * netted, not averaged in - so plugging in does not turn a 42 mW idle drain into a
+ * 5 W "consumption" figure. The matching denominator is stored per bucket rather than
+ * derived, so a charging interval cannot silently dilute the average.
+ *
+ * A bucket's coverage is its discharge time over the time that could have been
+ * discharging: discharge time plus missing time. Observed charging time is subtracted
+ * from the denominator, because it is known not to be drain time; unobserved time
+ * stays in it, because it is unknown. A bucket that never discharged reports the em
+ * dash instead of a claim about a state that was not measured.
+ */
+fun screenSplitView(
+    summary: SessionSummary,
+    lowImpact: Boolean,
+): ScreenSplitView {
+    val elapsed = summary.elapsedSeconds.coerceAtLeast(0.0)
+    val offDischargeSeconds = summary.displayOffDischargeSeconds.coerceAtLeast(0.0)
+    val onDischargeSeconds = summary.displayOnDischargeSeconds.coerceAtLeast(0.0)
+    val offMissingSeconds = missingSeconds(summary.displayOffWallSeconds, summary.displayOffSeconds)
+    val onMissingSeconds = missingSeconds(summary.displayOnWallSeconds, summary.displayOnSeconds)
+    val offCoverage = WpmFormat.coveragePercent(
+        offDischargeSeconds,
+        offDischargeSeconds + offMissingSeconds,
+    )
+    val onCoverage = WpmFormat.coveragePercent(
+        onDischargeSeconds,
+        onDischargeSeconds + onMissingSeconds,
+    )
+    val offLow = isScreenBucketPoorlySampled(offDischargeSeconds, offCoverage)
+    val onLow = isScreenBucketPoorlySampled(onDischargeSeconds, onCoverage)
+
+    val off = ScreenStateCell(
+        label = "Screen off",
+        average = dischargeRate(summary.displayOffOutWh, offDischargeSeconds),
+        detail = bucketDetail(
+            observedSeconds = summary.displayOffSeconds,
+            dischargeSeconds = offDischargeSeconds,
+            missingSeconds = offMissingSeconds,
+            outWh = summary.displayOffOutWh,
+            emptyText = "no screen-off time yet",
+            chargingOnlyText = "charging only \u00b7 no discharge measured",
+            missingBasisText = "discharge time not recorded",
+            lowCoverage = offLow,
+        ),
+        hasTime = offDischargeSeconds > 0.0,
+        lowCoverage = offLow,
+    )
+    val on = ScreenStateCell(
+        label = "Screen on",
+        average = dischargeRate(summary.displayOnOutWh, onDischargeSeconds),
+        detail = bucketDetail(
+            observedSeconds = summary.displayOnSeconds,
+            dischargeSeconds = onDischargeSeconds,
+            missingSeconds = onMissingSeconds,
+            outWh = summary.displayOnOutWh,
+            emptyText = "no screen-on time yet",
+            chargingOnlyText = "charging only \u00b7 no discharge measured",
+            missingBasisText = "discharge time not recorded",
+            lowCoverage = onLow,
+        ),
+        hasTime = onDischargeSeconds > 0.0,
+        lowCoverage = onLow,
+    )
+
+    val thin = buildList {
+        if (offLow) {
+            add("Screen-off time is poorly sampled: " +
+                "${WpmFormat.durationCompact(offDischargeSeconds)} of " +
+                "${WpmFormat.durationCompact(offDischargeSeconds + offMissingSeconds)}.")
+        }
+        if (onLow) {
+            add("Screen-on time is poorly sampled: " +
+                "${WpmFormat.durationCompact(onDischargeSeconds)} of " +
+                "${WpmFormat.durationCompact(onDischargeSeconds + onMissingSeconds)}.")
+        }
+    }
+    val dozeHint = if (offLow && lowImpact) {
+        " Doze suspends polling in low-impact mode \u2014 high-resolution mode gives a reliable " +
+            "screen-off average."
+    } else {
+        ""
+    }
+
+    // Pre-v5 history, and only that: a session that produced no display-state
+    // information whatsoever. A live session always books its first interval to one
+    // of the three buckets, so "no wall time anywhere" cannot describe a new session
+    // that merely failed to read PowerManager (that time lands in the unknown
+    // bucket), and a gap still counts as wall time in a known state.
+    val untracked = !off.hasTime && !on.hasTime &&
+        summary.displayOffWallSeconds <= 0.0 && summary.displayOnWallSeconds <= 0.0 &&
+        summary.displayUnknownWallSeconds <= 0.0 &&
+        elapsed > 0.0
+    return ScreenSplitView(
+        coverage = coverageLabel(offCoverage) + " \u00b7 " + coverageLabel(onCoverage),
+        off = off,
+        on = on,
+        lowCoverageNote = if (thin.isEmpty()) null else thin.joinToString(" ") + dozeHint,
+        untrackedNote = if (untracked) {
+            "Screen state is recorded from version 5 onward; earlier sessions were measured without it."
+        } else {
+            null
+        },
+    )
+}
+
+/** Unobserved time in a bucket: wall time that produced no reading. */
+private fun missingSeconds(wallSeconds: Double, observedSeconds: Double): Double =
+    (wallSeconds - observedSeconds).coerceAtLeast(0.0)
+
+/** A bucket with no discharge time is absent, not thin. */
+private fun isScreenBucketPoorlySampled(seconds: Double, coveragePercent: Int?): Boolean =
+    seconds > 0.0 && coveragePercent != null && coveragePercent < MIN_SPLIT_COVERAGE_PERCENT
+
+/**
+ * Mean discharge power over the bucket's discharging time, always positive.
+ *
+ * Charge energy is deliberately absent: mixing it in would report a charger's output
+ * as screen-off consumption.
+ */
+private fun dischargeRate(outWh: Double, dischargeSeconds: Double): UnitQuantity {
+    if (dischargeSeconds <= 0.0 || outWh <= 0.0) return WpmFormat.power(null, absolute = true)
+    return WpmFormat.power(outWh / dischargeSeconds * 3600.0, absolute = true)
+}
+
+private fun bucketDetail(
+    observedSeconds: Double,
+    dischargeSeconds: Double,
+    missingSeconds: Double,
+    outWh: Double,
+    emptyText: String,
+    chargingOnlyText: String,
+    missingBasisText: String,
+    lowCoverage: Boolean,
+): String {
+    if (dischargeSeconds <= 0.0) {
+        // Three distinct facts, none of which may borrow another's wording:
+        //  - energy out but no discharging time: a v5 row, whose basis was not stored;
+        //  - observed time but no energy out: this bucket only charged;
+        //  - neither: nothing was measured here at all.
+        return when {
+            outWh > 0.0 -> missingBasisText
+            observedSeconds > 0.0 -> chargingOnlyText
+            else -> emptyText
+        }
+    }
+    if (lowCoverage) {
+        return WpmFormat.durationCompact(dischargeSeconds) + " of " +
+            WpmFormat.durationCompact(dischargeSeconds + missingSeconds) + " \u00b7 low coverage"
+    }
+    val parts = mutableListOf(WpmFormat.durationCompact(dischargeSeconds))
+    if (outWh > 0.0) parts += WpmFormat.withUnit(WpmFormat.energy(outWh)) + " out"
+    return parts.joinToString(" \u00b7 ")
+}
+
+private fun coverageLabel(percent: Int?): String =
+    if (percent == null) WpmFormat.DASH else "$percent%"
+
 /** Real, recorded session event derived from stored samples (never invented). */
 data class SessionEvent(val timestampMillis: Long, val title: String, val detail: String)
 

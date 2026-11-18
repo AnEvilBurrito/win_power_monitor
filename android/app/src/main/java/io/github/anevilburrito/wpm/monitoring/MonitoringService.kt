@@ -600,6 +600,12 @@ class MonitoringService : Service() {
                 provisional = !confirmed.calibrated && tentative != null,
                 startupPollCount = startup.pollCount,
                 startupCheckComplete = startup.complete,
+                // The display state maintained from ACTION_SCREEN_ON/OFF, not a fresh
+                // PowerManager query per poll: one binder call per sample would be a
+                // real cost on every cadence for a value that changes tens of times
+                // a day. Null (unknown) stays null and is reported as unknown rather
+                // than guessed as either state.
+                displayOn = displayInteractive,
             )
             if (interpretationChanged) {
                 // Mark the first differently interpreted sample and leave every

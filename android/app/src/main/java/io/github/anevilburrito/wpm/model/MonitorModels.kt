@@ -91,6 +91,14 @@ data class BatterySample(
     val condition: String? = null,
     val plugged: Boolean? = null,
     val flow: FlowState = FlowState.UNKNOWN,
+    /**
+     * `PowerManager.isInteractive` when this sample was read: true while the display
+     * was on, false while it was off, null for history recorded before schema v5.
+     *
+     * Deliberately tri-state: null must stay "not recorded", never default to
+     * "screen off", or an upgraded database would invent screen-off time.
+     */
+    val displayOn: Boolean? = null,
     /** Normalised signed microamps actually used for [amps] and [watts]. */
     val currentMicroamps: Long? = null,
     val voltageMillivolts: Int? = null,
@@ -134,6 +142,39 @@ data class SessionSummary(
     val maximumMagnitudeWatts: Double? = null,
     val sampleCount: Int = 0,
     val gapCount: Int = 0,
+    /**
+     * Observed seconds attributed to each display state. The three buckets always
+     * sum to [observedSeconds]: a gap is unobserved time, not a third measurement.
+     * [displayUnknownSeconds] covers history written before schema v5.
+     */
+    val displayOnSeconds: Double = 0.0,
+    val displayOffSeconds: Double = 0.0,
+    val displayUnknownSeconds: Double = 0.0,
+    /**
+     * Wall time attributed to each state, including unobserved intervals. Observed
+     * divided by wall is that bucket's coverage: screen-off time that doze swallowed
+     * lowers the screen-off coverage instead of being blamed on the screen-on bucket.
+     */
+    val displayOnWallSeconds: Double = 0.0,
+    val displayOffWallSeconds: Double = 0.0,
+    val displayUnknownWallSeconds: Double = 0.0,
+    /**
+     * Time each state spent actually discharging, from the zero-crossing split. This
+     * is the denominator of the bucket average, so a charging interval can neither
+     * raise nor dilute a drain figure.
+     */
+    val displayOnDischargeSeconds: Double = 0.0,
+    val displayOffDischargeSeconds: Double = 0.0,
+    /**
+     * Energy integrated while the display was in each state. These sum to [outWh]
+     * and [inWh] whenever [displayUnknownSeconds] is zero, which is every session
+     * recorded by this build; legacy sessions store zeroes and are labelled as
+     * untracked instead of being recomputed.
+     */
+    val displayOnOutWh: Double = 0.0,
+    val displayOnInWh: Double = 0.0,
+    val displayOffOutWh: Double = 0.0,
+    val displayOffInWh: Double = 0.0,
 )
 
 data class MonitorUiState(

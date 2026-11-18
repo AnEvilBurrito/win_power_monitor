@@ -70,6 +70,9 @@ object CsvExporter {
         "average_current_A",
         "estimated_average_power_W",
         "average_window_ms",
+        // Appended provenance: whether the display was on when this row was read.
+        // Blank means "not recorded" (history before schema v5), never "off".
+        "display_on",
     )
 
     const val NEWLINE = "\n"
@@ -328,6 +331,9 @@ object CsvExporter {
             decimal(averageAmps, 6),
             decimal(averageWatts, 6),
             averageWindowMillis?.toString() ?: "",
+            // Tri-state on purpose: 1 = display on, 0 = display off, blank = the
+            // poll did not record a display state (or the row predates schema v5).
+            sample.displayOn?.let { if (it) "1" else "0" } ?: "",
         )
         return values.joinToString(",") { escape(it) }
     }

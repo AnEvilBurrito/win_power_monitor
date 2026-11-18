@@ -32,12 +32,17 @@ internal fun SessionScreen(scope: DashboardScope, actions: DashboardActions) {
     val coverage = WpmFormat.coveragePercent(summary.observedSeconds, summary.elapsedSeconds)
     val missingSeconds = (summary.elapsedSeconds - summary.observedSeconds).coerceAtLeast(0.0)
     val stats = statsView(summary, scope.settings.absolute)
+    val lowImpact = scope.settings.mode != MonitoringMode.HIGH_RESOLUTION
     // Nothing recorded means nothing to export; the control stays truthful.
     val exportable = summary.sampleCount > 0 || samples.isNotEmpty()
+    val split = screenSplitView(
+        summary = summary,
+        lowImpact = lowImpact,
+    )
     val events = sessionEvents(
         summary = summary,
         samples = samples,
-        lowImpact = scope.settings.mode != MonitoringMode.HIGH_RESOLUTION,
+        lowImpact = lowImpact,
     ) { reason -> SampleText.reason(context, reason) }
     Column(
         Modifier
@@ -128,6 +133,7 @@ internal fun SessionScreen(scope: DashboardScope, actions: DashboardActions) {
             color = colors.muted,
             modifier = Modifier.padding(top = 4.dp),
         )
+        ScreenSplitSection(split)
         WpmDataRow(stats.averageLabel, WpmFormat.withUnit(stats.average))
         WpmDataRow(
             "Minimum / maximum",
@@ -159,7 +165,7 @@ internal fun SessionScreen(scope: DashboardScope, actions: DashboardActions) {
         )
         Text(
             text = if (exportable) {
-                "Includes timestamps, signed power readings and gap markers. " +
+                "Includes timestamps, signed power readings, screen state and gap markers. " +
                     "Only history retained on this device is exported."
             } else {
                 "Nothing recorded yet, so there is nothing to export."
@@ -176,6 +182,98 @@ internal fun SessionScreen(scope: DashboardScope, actions: DashboardActions) {
             )
         }
         Spacer(Modifier.height(20.dp))
+    }
+}
+
+/**
+ * Average power split by display state: two buckets, then the rows that keep them
+ * honest.
+ *
+ * Rendered in every state, including a session with no screen-off time yet, and its
+ * detail line reserves two lines: a screen-off stretch starting mid-session must not
+ * shift the statistics and events below it. An empty bucket reports why instead of
+ * `0 mW`, and a bucket whose coverage is too thin says so in the same glance rather
+ * than showing a confident-looking average.
+ */
+@Composable
+private fun ScreenSplitSection(split: ScreenSplitView, modifier: Modifier = Modifier) {
+    val colors = LocalWpmColors.current
+    Column(modifier.fillMaxWidth()) {
+        WpmSectionHeading(
+            title = "Screen state",
+            modifier = Modifier.padding(top = 18.dp),
+            trailing = {
+                Text(
+                    text = split.coverage,
+                    style = telemetry(11.sp),
+                    color = colors.text,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            },
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            ScreenStateCellView(split.off, Modifier.weight(1f))
+            ScreenStateCellView(split.on, Modifier.weight(1f))
+        }
+        split.lowCoverageNote?.let { note ->
+            AttentionNote(text = note, color = colors.warning)
+        }
+        split.untrackedNote?.let { note ->
+            Text(
+                text = note,
+                style = captionText(),
+                color = colors.muted,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/** One bucket: label, average with its unit slot, and a two-line detail reserve. */
+@Composable
+private fun ScreenStateCellView(cell: ScreenStateCell, modifier: Modifier = Modifier) {
+    val colors = LocalWpmColors.current
+    Column(modifier) {
+        Text(
+            text = cell.label,
+            style = captionText(),
+            color = colors.muted,
+            maxLines = 1,
+            softWrap = false,
+        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = cell.average.text,
+                style = telemetry(21.sp),
+                color = colors.text,
+                maxLines = 1,
+                softWrap = false,
+            )
+            if (cell.average.available) {
+                Text(
+                    text = cell.average.unit,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = colors.muted,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+        }
+        Text(
+            text = cell.detail,
+            style = telemetry(10.sp),
+            color = colors.muted,
+            minLines = 2,
+            maxLines = 2,
+            modifier = Modifier.padding(top = 1.dp),
+        )
     }
 }
 
